@@ -42,17 +42,18 @@
 //        collision and rendering are decoupled. matrixAutoUpdate=false; one hemi
 //        + one shadow-casting sun (the testRoom static-bake pattern).
 //
-// A DEV-only self-check (import.meta.env.DEV) runs at build: (a) BFS from node 0
-// reaches every waypoint node; (b) every spawn clears every collider by ≥0.6 m;
-// (c) every waypoint link segment is rayBlocked-free at y≈1.0. console.warn on
-// any failure — cheap authoring insurance, zero cost in prod.
+// A DEV-only self-check runs at build via the SHARED, y-aware runMapSelfCheck
+// (world/mapChecks.js — reused by Prod + the v1.2 Shoots map): BFS connectivity,
+// spawn clearance + floor-support at each spawn's own y, per-link LOS at the
+// link's eye height, and a link-slope cap (K5/K8/K9). console.warn on any
+// failure — cheap authoring insurance, zero cost in prod (guarded + tree-shaken).
 // ============================================================================
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PERF } from '../config.js';
-import { rayBlocked } from '../combat/hitscan.js';
 import { makeSignTexture, makeGradientTexture, makeSignMesh } from './decor.js';
+import { runMapSelfCheck } from './mapChecks.js'; // shared DEV self-check (K8/K9) — reused by every map
 
 // -- Palette. Extends the testRoom COLORS discipline; keeps the Phase-1 flat
 //    NoToneMapping look. SE half accents teal, Bug half accents orange; A-lane a
@@ -675,8 +676,9 @@ export function buildProdMap() {
   };
 
   // DEV authoring insurance — never runs in prod (tree-shaken by the guard).
+  // Now the SHARED, y-aware check (mapChecks.js) so Prod + Shoots stay in sync.
   if (import.meta.env.DEV) {
-    runSelfCheck(built);
+    runMapSelfCheck(built);
   }
 
   return built;
@@ -751,125 +753,4 @@ function buildWaypoints() {
     // -- B-corridor dogleg weave node : 33 (north channel, before the east stub) --
     { x:   1.2, z:  11.9, links: [19, 20] },           // 33 B center-north (S-bend link 19↔20)
   ];
-}
-
-// ---------------------------------------------------------------------------
-// DEV-only self-check (import.meta.env.DEV in buildProdMap). Three cheap
-// authoring assertions; each console.warns on failure so a bad edit is caught
-// the moment the map loads, without a runtime cost in prod.
-//   (a) CONNECTIVITY: BFS from node 0 must reach EVERY waypoint node — an
-//       unreachable node is a bot that gets stuck / a dead pocket.
-//   (b) SPAWN CLEARANCE (D5): every spawn point clears every collider by ≥0.6 m
-//       (the tuning bodyRadius+margin) so nobody spawns wedged in a wall.
-//   (c) LINK SANITY: every waypoint link segment, tested at y≈1.0 (chest height),
-//       is rayBlocked-free — a link must not cut through a wall/rack.
-// ---------------------------------------------------------------------------
-function runSelfCheck(map) {
-  const nodes = map.waypointNodes;
-  const n = nodes.length;
-
-  // (a) BFS connectivity from node 0.
-  const seen = new Uint8Array(n);
-  const queue = [0];
-  seen[0] = 1;
-  let reached = 1;
-  while (queue.length) {
-    const cur = queue.shift();
-    const links = nodes[cur].links;
-    for (let i = 0; i < links.length; i++) {
-      const nb = links[i];
-      if (nb < 0 || nb >= n) { console.warn(`[prod] node ${cur} links to out-of-range ${nb}`); continue; }
-      if (!seen[nb]) { seen[nb] = 1; reached++; queue.push(nb); }
-    }
-  }
-  if (reached !== n) {
-    const missing = [];
-    for (let i = 0; i < n; i++) if (!seen[i]) missing.push(i);
-    console.warn(`[prod] SELF-CHECK (a) connectivity: BFS from 0 reached ${reached}/${n} nodes; unreachable: [${missing.join(',')}]`);
-  }
-
-  // Also verify links are symmetric (author both ends) — a one-way link is
-  // almost always a typo and makes bot pathing asymmetric.
-  for (let i = 0; i < n; i++) {
-    const links = nodes[i].links;
-    for (let j = 0; j < links.length; j++) {
-      const nb = links[j];
-      if (nb < 0 || nb >= n) continue;
-      if (!nodes[nb].links.includes(i)) {
-        console.warn(`[prod] SELF-CHECK link asymmetry: ${i}→${nb} but not ${nb}→${i}`);
-      }
-    }
-  }
-
-  // (b) Spawn clearance ≥0.6 m from every collider (D5). Check both teams.
-  const CLEAR = 0.6;
-  const checkSpawn = (label, arr) => {
-    for (let s = 0; s < arr.length; s++) {
-      const p = arr[s].pos;
-      for (let i = 0; i < map.colliders.length; i++) {
-        const c = map.colliders[i];
-        // Closest-point distance from the spawn XZ to the collider's XZ rect.
-        const cx = Math.max(c.min.x, Math.min(p.x, c.max.x));
-        const cz = Math.max(c.min.z, Math.min(p.z, c.max.z));
-        const dx = p.x - cx, dz = p.z - cz;
-        // Only walls that rise into body height matter (y overlap with [0, body]).
-        if (c.max.y <= 0.05) continue; // floor / flat strip — ignore
-        if (dx * dx + dz * dz < CLEAR * CLEAR) {
-          console.warn(`[prod] SELF-CHECK (b) spawn clearance: ${label} spawn ${s} (${p.x},${p.z}) is <${CLEAR}m from collider ${i}`);
-          break;
-        }
-      }
-    }
-  };
-  checkSpawn('SE', map.seSpawns);
-  checkSpawn('Bug', map.bugSpawns);
-
-  // (b2) Spawn FLOOR SUPPORT — every spawn must stand on a collider (clearance
-  // alone missed the visual-only-floor bug that dropped the player through the
-  // world; D9 fired in the Phase-4 gate). A spawn is supported iff some collider
-  // whose top is at/just below its feet contains its XZ.
-  const checkSupport = (label, arr) => {
-    for (let s = 0; s < arr.length; s++) {
-      const p = arr[s].pos;
-      let supported = false;
-      for (let i = 0; i < map.colliders.length; i++) {
-        const c = map.colliders[i];
-        if (p.x < c.min.x || p.x > c.max.x || p.z < c.min.z || p.z > c.max.z) continue;
-        if (c.max.y <= p.y + 0.01 && c.max.y >= p.y - 0.5) { supported = true; break; }
-      }
-      if (!supported) {
-        console.warn(`[prod] SELF-CHECK (b2) NO FLOOR under ${label} spawn ${s} (${p.x},${p.z}) — the player will fall out of the world (D9)`);
-      }
-    }
-  };
-  checkSupport('SE', map.seSpawns);
-  checkSupport('Bug', map.bugSpawns);
-
-  // (c) Link segments clear of geometry at chest height (y≈1.0). rayBlocked
-  // tests the world colliders; a link that crosses a wall/rack is a bad edit.
-  const EYE = 1.0;
-  const from = new THREE.Vector3();
-  const dir = new THREE.Vector3();
-  let checkedPairs = 0, blocked = 0;
-  for (let i = 0; i < n; i++) {
-    const a = nodes[i];
-    for (let j = 0; j < a.links.length; j++) {
-      const bi = a.links[j];
-      if (bi <= i) continue; // test each undirected pair once
-      if (bi < 0 || bi >= n) continue;
-      const b = nodes[bi];
-      from.set(a.x, EYE, a.z);
-      dir.set(b.x - a.x, 0, b.z - a.z);
-      const dist = dir.length();
-      if (dist < 1e-4) continue;
-      dir.multiplyScalar(1 / dist);
-      checkedPairs++;
-      if (rayBlocked(from, dir, dist, map.colliders)) {
-        blocked++;
-        console.warn(`[prod] SELF-CHECK (c) link ${i}↔${bi} crosses geometry (len ${dist.toFixed(1)}m at y=${EYE})`);
-      }
-    }
-  }
-  // A single summary line so a clean map still prints proof it ran.
-  console.log(`[prod] self-check: ${reached}/${n} nodes reachable, ${map.seSpawns.length + map.bugSpawns.length} spawns checked, ${checkedPairs} links tested (${blocked} blocked).`);
 }

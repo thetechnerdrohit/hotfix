@@ -22,6 +22,10 @@ export async function initTuner() {
   m.add(MOVE, 'jumpHeight', 0.5, 2, 0.05);
   m.add(MOVE, 'coyoteMs', 0, 250, 10);
   m.add(MOVE, 'jumpBufferMs', 0, 250, 10);
+  // Verticality (v1.2, register group K) — step-up / snap-down / eye-smooth.
+  m.add(MOVE, 'stepHeight', 0, 0.6, 0.02).name('step-up height (m)');
+  m.add(MOVE, 'stepSnapDown', 0, 0.6, 0.02).name('snap-down (m)');
+  m.add(MOVE, 'stepEyeSmooth', 4, 30, 1).name('step eye-smooth (1/s)');
 
   const f = gui.addFolder('FEEL');
   f.add(FEEL, 'fovSprintAdd', 0, 15, 0.5);

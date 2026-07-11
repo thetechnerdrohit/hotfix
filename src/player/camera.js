@@ -32,6 +32,9 @@
 
 import * as THREE from 'three';
 import { MOVE, FEEL, INPUT, COMBAT, ADS } from '../config.js';
+// K3 clamp: the step-eye offset can never exceed one full step's worth of dip
+// (a stair burst can't sink the eye into the floor). Module const — no alloc.
+const STEP_EYE_MIN = -MOVE.stepHeight;
 
 const PITCH_LIMIT = THREE.MathUtils.degToRad(INPUT.pitchLimitDeg);
 
@@ -53,6 +56,7 @@ export class FpsCamera {
     this.fovCurrent = this.fovBase;
     this.dip = 0; // landing-dip spring state
     this.dipVel = 0;
+    this.stepEye = 0; // K3: eye-height offset (m, ≤0) absorbing step-up pos.y pops; when the feet jump UP a step this pushes the eye DOWN by that delta, then decays to 0 (MOVE.stepEyeSmooth) so the view glides up smoothly instead of snapping. Same discipline as the landing dip — cosmetic, never touches aim/collider/pos.
 
     // Recoil offset (radians), separate from this.pitch/this.yaw. Added to the
     // rendered rotation only; recovered toward 0 each frame (§4B re-center).
@@ -139,6 +143,16 @@ export class FpsCamera {
     this.dipVel += (-FEEL.dipStiffness * this.dip - FEEL.dipDamping * this.dipVel) * dt;
     this.dip = Math.max(this.dip + this.dipVel * dt, -0.3);
 
+    // Step-up eye smoothing (K3): the controller reports metres pos.y jumped up
+    // this frame (stepRise, 0 on flat ground). Push the eye DOWN by that delta so
+    // the WORLD eye height (player.pos.y + this) doesn't jump, then decay the
+    // offset back to 0 (exp, B2) so the view rises smoothly. Clamped so a fast
+    // stair run can't stack the dip past one step. player.stepRise is undefined
+    // on non-controller followers (e.g. death cam target) — guarded with ?? 0.
+    this.stepEye = Math.max(STEP_EYE_MIN, this.stepEye - (player.stepRise ?? 0));
+    this.stepEye += (0 - this.stepEye) * (1 - Math.exp(-MOVE.stepEyeSmooth * dt));
+    if (this.stepEye > -1e-4) this.stepEye = 0;
+
     // FOV target = sprint kick (C11) composed with the ADS zoom (L6). ADS WINS
     // over the sprint kick: the sprint add is faded out by the blend, then the
     // zoom is subtracted, so a full aim is base − zoom with no sprint widening.
@@ -201,7 +215,7 @@ export class FpsCamera {
 
     this.camera.position.set(
       player.pos.x + shakePosX,
-      player.pos.y + MOVE.eyeHeight + this.dip + shakePosY - deathDrop,
+      player.pos.y + MOVE.eyeHeight + this.dip + this.stepEye + shakePosY - deathDrop,
       player.pos.z,
     );
     // Rendered rotation = player aim + recoil offset + damage shake (+ death roll

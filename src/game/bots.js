@@ -28,8 +28,12 @@
 // Movement states: 'patrol' (random neighbor walks, per-bot desync), 'engage'
 // (hold near the current node with lateral strafe jitter, facing the target),
 // 'hunt' (BFS toward the last-known node of the nearest enemy). Speed
-// MOVE.runSpeed, exponential accel (B2), floor-locked (y=0 — flat maps by
-// design; bots do NOT jump. Documented; Phase 4 revisits with real verticality).
+// MOVE.runSpeed, exponential accel (B2). v1.2 (register group K6): the bot's y is
+// GRAPH-LOCKED — eased along the current link's height gradient (BOTS.yLerp) so
+// bots climb stairs authored as graph edges. Bots still do NOT jump; on a flat
+// map (every node y=0) this is identical to the old y=0 floor lock. Hitboxes/
+// headCenter/positional audio/splats all derive from this.pos, so real y flows
+// through them for free (_refreshHitboxes; verified across the fx/audio callers).
 // Pairwise separation push (separationRadius) so bots never stack. Each bot
 // exposes a dynamic AABB the match maintains and feeds the player collider.
 //
@@ -751,13 +755,42 @@ export class Bot {
     const k = 1 - Math.exp(-this.tuning.accel * dt);
     this.vel.x += (_desired.x - this.vel.x) * k;
     this.vel.z += (_desired.z - this.vel.z) * k;
-    this.vel.y = 0; // floor-locked (flat map; bots don't jump — documented)
+    this.vel.y = 0; // y is graph-driven (below), not integrated — bots don't jump
 
-    // Integrate + resolve against world colliders (per-axis, like the player,
+    // Integrate XZ + resolve against world colliders (per-axis, like the player,
     // so bots slide along walls and can't walk through geometry).
     this._moveAxis('x', this.vel.x * dt, world);
     this._moveAxis('z', this.vel.z * dt, world);
-    this.pos.y = 0; // hard floor lock
+
+    // K6: graph-lock the bot's y to the current link's height gradient instead of
+    // the old hard y=0. Target = the y of the link segment (curNode→targetNode)
+    // at the bot's XZ traversal progress, exp-smoothed so stair-corner y-kinks
+    // don't pop the mesh/head/audio. On a flat map every node y=0 ⇒ the target is
+    // always 0 and this eases 0 — behaviour identical to the old floor lock.
+    const yTarget = this._linkGroundY();
+    this.pos.y += (yTarget - this.pos.y) * (1 - Math.exp(-this.tuning.yLerp * dt));
+  }
+
+  // The floor height the bot should currently stand at: linearly interpolate the
+  // y of the segment from curNode to targetNode by how far along it (in XZ) the
+  // bot is. Clamped to [0,1] so overshoot past a node holds that node's y. When
+  // engaging (no waypoint walk) or with no valid segment, hold the nearer node's
+  // y so the bot rests on its deck. K6/K7 — every deck is a node, so a reachable
+  // position always has a defined ground height here.
+  _linkGroundY() {
+    const nodes = this.graph.nodes;
+    const from = nodes[this.curNode];
+    const to = nodes[this.targetNode];
+    if (!from) return this.pos.y;
+    if (!to || to === from) return from.pos.y;
+    const sx = to.pos.x - from.pos.x;
+    const sz = to.pos.z - from.pos.z;
+    const segLen2 = sx * sx + sz * sz;
+    if (segLen2 < 1e-6) return to.pos.y;
+    // Project (bot - from) onto the segment → normalized progress t (clamp 0..1).
+    const t = Math.min(1, Math.max(0,
+      ((this.pos.x - from.pos.x) * sx + (this.pos.z - from.pos.z) * sz) / segLen2));
+    return from.pos.y + (to.pos.y - from.pos.y) * t;
   }
 
   // Simple XZ AABB collide-and-slide against the STATIC world (mirrors the

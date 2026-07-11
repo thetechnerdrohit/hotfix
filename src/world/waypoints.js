@@ -6,9 +6,14 @@
 // real "Prod" map's nodes to the SAME makeGraph — keep this file free of any
 // test-room specifics beyond the exported TEST_ROOM_NODES constant.
 //
+// v1.2 (register group K): nodes gain an optional `y` (deck height) — links can
+// now carry a slope, so bots climb stairs authored as graph edges. `y` defaults
+// to 0, so every pre-v1.2 flat-map literal (y omitted) is byte-identical in
+// behaviour. path()/BFS are unchanged (topology is height-agnostic).
+//
 // The graph exposes:
-//   nodes:            [{ pos:THREE.Vector3(y=0), links:number[] }]
-//   nearestNode(pos): index of the closest node to a world position (XZ)
+//   nodes:            [{ pos:THREE.Vector3(y from def, default 0), links:number[] }]
+//   nearestNode(pos): closest node to a world pos (XZ + a small y tie-break, K6)
 //   path(fromIdx, toIdx, outArray): BFS; fills outArray with the node-index
 //                     chain [from … to] and returns its LENGTH (0 if no path /
 //                     bad indices). PREALLOCATED visited/queue/parent scratch —
@@ -28,8 +33,10 @@ class WaypointGraph {
     this.nodes = new Array(nodeDefs.length);
     for (let i = 0; i < nodeDefs.length; i++) {
       const d = nodeDefs[i];
+      // K6: nodes carry y (floor height of the deck this node sits on). Absent
+      // ⇒ 0, so every existing flat map's literal (y omitted) is unchanged.
       this.nodes[i] = {
-        pos: new THREE.Vector3(d.x, 0, d.z),
+        pos: new THREE.Vector3(d.x, d.y ?? 0, d.z),
         links: d.links.slice(),
       };
     }
@@ -43,9 +50,12 @@ class WaypointGraph {
     this._visitedGen = new Int32Array(n); // last stamp each node was visited on
   }
 
-  // Nearest node to a world position, by squared XZ distance (y ignored — the
-  // arena is flat). Linear scan; node counts are tiny (~16), so this is cheap
-  // and alloc-free. Ties break toward the lower index (deterministic).
+  // Nearest node to a world position, primarily by squared XZ distance, with a
+  // small y-proximity TIE-BREAK (K6) so a stacked map (a node directly above
+  // another on a higher deck) picks the one on the querier's own level. The
+  // y term is weighted so it only ever separates near-equal XZ candidates — XZ
+  // still dominates. Flat maps (all y=0) reduce to the old pure-XZ scan exactly.
+  // Linear scan; node counts are tiny, so this stays cheap and alloc-free.
   nearestNode(pos) {
     let best = 0;
     let bestD = Infinity;
@@ -53,7 +63,10 @@ class WaypointGraph {
       const np = this.nodes[i].pos;
       const dx = np.x - pos.x;
       const dz = np.z - pos.z;
-      const d = dx * dx + dz * dz;
+      const dy = np.y - pos.y;
+      // XZ distance + a lightly-weighted y term (0.25×) → same-level bias without
+      // letting height override a clearly-closer XZ node.
+      const d = dx * dx + dz * dz + dy * dy * 0.25;
       if (d < bestD) { bestD = d; best = i; }
     }
     return best;
@@ -132,7 +145,8 @@ export function makeGraph(nodes) {
 //   jump crates x=5, z∈{0,−1.8,−3.6}      slide pillars x∈{−4,−5.6}, z=−3
 //   lintel posts x∈{−2,0}, z=4            L-corner x=7 z=6 & x=8.8 z=7.9
 //   mid block x=−6, z=5 (x∈[−7,−5])
-// 16 nodes. Phase 4 supplies the real map's nodes through makeGraph unchanged.
+// 16 flat nodes (0..15) + 2 v1.2 stair nodes (16 foot, 17 platform, appended
+// below with y). Phase 4+ supply real maps' nodes through makeGraph unchanged.
 //
 // Layout (x → right, z → toward SE spawn / +z; ASCII, not to scale):
 //         BUG spawn (z≈−9):   12 — 13 — 14
@@ -148,6 +162,7 @@ export const TEST_ROOM_NODES = [
   { x: -6.0, z: 9.0,  links: [0, 7] },          // 1  SE spawn left
   { x: 6.0,  z: 9.0,  links: [0, 3, 6] },       // 2  SE spawn right
   { x: 10.5, z: 9.0,  links: [2, 6] },          // 3  SE right corner
+  // (node 6 also links to the v1.2 stair-foot node 16 — see the append below.)
   { x: -3.0, z: 2.0,  links: [5, 7, 8] },       // 4  mid-left (clear of lintel posts at z=4)
   { x: 3.5,  z: 2.0,  links: [0, 4, 6, 9] },    // 5  mid-center
   { x: 10.0, z: 3.0,  links: [2, 3, 5, 10] },   // 6  right lane mid (clear of L-corner x=7,z=6)
@@ -160,8 +175,18 @@ export const TEST_ROOM_NODES = [
   { x: 0.0,  z: -9.0, links: [9, 12, 14] },     // 13 Bug spawn center
   { x: 6.0,  z: -9.0, links: [10, 13] },        // 14 Bug spawn right
   { x: -10.5, z: 9.0, links: [1, 7] },          // 15 SE left corner (extra coverage)
+  // -- v1.2 VERTICALITY GATE nodes (register group K6/K7) — ON the testRoom
+  //    staircase fixture so bots CLIMB it in the test-room match. y carries the
+  //    deck height; the foot→platform link averages 0.38 m/m (≤ SLOPE_MAX 0.45,
+  //    K5). 16 sits on the floor just before the first tread; 17 sits on the
+  //    1.75 m platform. Placed in the clear NE quadrant, clear of node 10.
+  { x: 9.0, y: 0.0,  z: 1.6,  links: [6, 17] },   // 16 stair FOOT (floor level, before tread 1)
+  { x: 9.0, y: 1.75, z: -3.0, links: [16] },      // 17 PLATFORM top (1.75 m — bots hold it & shoot down)
 ];
 
 // Rewire node 1 to include the SE left corner (15) now that it exists — keeps
 // the loop fully connected without editing the literal above out of order.
 TEST_ROOM_NODES[1].links.push(15);
+// Wire the right-lane node 6 to the stair foot (16) so the staircase is reachable
+// from the graph (K7 — no player-only areas; a bot BFS can find the platform).
+TEST_ROOM_NODES[6].links.push(16);

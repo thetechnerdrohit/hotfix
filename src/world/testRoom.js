@@ -78,6 +78,34 @@ export function buildTestRoom() {
   // A fat mid block for circling around
   addBox(2, 1.2, 2, -6, 0, 5, COLORS.crateAlt);
 
+  // -- VERTICALITY GATE FIXTURE (v1.2, register group K) --------------------
+  // A 5-step staircase (0.35 rise, 0.4 deep — K5-compliant: rise ≤ stepHeight
+  // 0.4, depth ≥ 0.28) climbing to a 1.75 m platform (3×3 m) with a 0.9 m rail
+  // on its north edge. Placed in the clear NE quadrant (x≈9, z −1→−6): east of
+  // the jump crates (x=5), north of the L-corner (z≥6), well inside the east
+  // wall (x=12.25). This is the feel gym for step-up/snap-down AND the bot-climb
+  // gate (waypoint nodes below sit ON the stairs + platform). Each step is a
+  // solid box whose TOP is the tread the player auto-steps onto (K1) / snaps
+  // down from (K4); the platform top is 5×0.35 = 1.75 m.
+  const STAIR_X = 9.0;         // stair/platform center x (NE quadrant, clear zone)
+  const STAIR_W = 3.0;         // tread + platform width (x)
+  const STEP_RISE = 0.35;      // per-step rise (≤ MOVE.stepHeight 0.4, K5)
+  const STEP_DEEP = 0.4;       // per-step depth (z)
+  const STEP_Z0 = 0.5;         // z of the FIRST (lowest) tread's near edge (recedes in −z)
+  for (let k = 1; k <= 5; k++) {
+    // Step k is a solid box from the floor up to k*rise; its near edge recedes
+    // in −z as it climbs, so the treads form a staircase you walk up along −z.
+    const topY = k * STEP_RISE;
+    const zCenter = STEP_Z0 - (k - 0.5) * STEP_DEEP;
+    addBox(STAIR_W, topY, STEP_DEEP, STAIR_X, 0, zCenter, k % 2 ? COLORS.crate : COLORS.crateAlt);
+  }
+  const PLAT_Y = 5 * STEP_RISE;    // 1.75 m — platform floor height
+  const PLAT_Z = STEP_Z0 - 5 * STEP_DEEP - 1.5; // just past the top tread, 3 m deep
+  addBox(STAIR_W, PLAT_Y, 3.0, STAIR_X, 0, PLAT_Z, COLORS.block); // solid pedestal up to 1.75 m
+  // A low rail (0.9 m) on the platform's NORTH edge (−z side) so you can peek/
+  // shoot over it but it reads as a lip — sits ON the platform top.
+  addBox(STAIR_W, 0.9, 0.2, STAIR_X, PLAT_Y, PLAT_Z - 1.5 + 0.1, COLORS.wallAccent);
+
   // Motion-perception grid — low-poly rooms need SOME visual frequency to
   // read your own speed against
   const grid = new THREE.GridHelper(24, 24, 0xaab3c8, 0x5f6a83);

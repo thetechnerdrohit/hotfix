@@ -139,6 +139,21 @@ export const MOVE = {
   maxFallSpeed: 40,
   dtClampMs: 50, // B1 — tab-suspend can never integrate through a wall
 
+  // -- VERTICALITY (v1.2, register group K). Stairs/ledges the player auto-climbs.
+  //    stepHeight: max rise (m) a GROUNDED horizontal move will auto-step up when
+  //      there's headroom above the obstacle top (K1/K2). Authored stair rises must
+  //      be ≤ this (K5). 0.4 clears the Shoots map's ≤0.4 m stair rises.
+  //    stepSnapDown: while grounded and walking (not jumping), the feet snap DOWN
+  //      to a collider top within this distance so descending stairs doesn't
+  //      air-strafe/bounce each step (K4). Kept == stepHeight so up/down are
+  //      symmetric. On flat ground this only ever snaps 0 (no-op).
+  //    stepEyeSmooth: 1/s exp rate the VISUAL eye-height offset decays after a
+  //      step lifts pos.y, so the camera glides instead of popping (K3, B2). Higher
+  //      = snappier. Purely cosmetic — never touches pos or the collider.
+  stepHeight: 0.4,
+  stepSnapDown: 0.4,
+  stepEyeSmooth: 14,
+
   // LOCKED once map authoring starts (D12): doorways/jump routes depend on these.
   height: 1.8,
   eyeHeight: 1.62,
@@ -442,7 +457,7 @@ export const MATCH = {
 export const BOTS = {
   difficulty: 'normal',    // 'easy' | 'normal' | 'hard' — shell sets before match start
 
-  // -- Movement (kinematic; no physics engine, floor-locked y=0 — flat map) --
+  // -- Movement (kinematic; no physics engine; y graph-locked via yLerp, K6) --
   accel: 10,               // 1/s exp approach of velocity toward the desired move (B2)
   arriveRadius: 0.6,       // m — "at" a waypoint node when within this
   repathInterval: 0.7,     // s between hunt BFS re-paths (staggered per bot)
@@ -454,6 +469,14 @@ export const BOTS = {
   strafeFlipMax: 1.6,      // s — max time before it flips (desync per bot)
   bodyRadiusXZ: 0.4,       // half-width of a bot's dynamic movement AABB (matches player halfWidth)
   bodyHeight: 1.8,         // bot collider/visual height (matches MOVE.height)
+
+  // -- 3D NAV (v1.2, register group K6/K7). Waypoint links carry a y-gradient;
+  //    the kinematic mover eases the bot's y toward the current link's height so
+  //    it walks up/down stairs authored as graph edges. yLerp is the 1/s exp rate
+  //    the bot's y follows the link-interpolated target height (B2) — high enough
+  //    to track stairs without lagging, smoothed so stair-corner y-kinks don't pop
+  //    the mesh/head/audio. On a flat map every node y=0 ⇒ this only ever eases 0.
+  yLerp: 12,
 
   // -- Senses cadence (shared across difficulties) --------------------------
   losInterval: 0.10,       // s between LOS raycasts per bot (staggered so not all fire the same frame)
