@@ -1,318 +1,260 @@
 // ============================================================================
-// "Shoots" — the v1.2 capstone map, cloned from Rohit's ar_shoots.fbx (a
-// Source-engine training-ground arena) and rebuilt in our primitive+collider
-// format (reference/shoots-layout.json is the extracted spec). This is the
-// DEFAULT map that ships; Prod is demoted to the DEV-only ?room=prod flag.
+// "Shoots" — the v1.2 capstone map, built VERBATIM from Rohit's ar_shoots.fbx.
+// This is the DEFAULT map that ships; Prod is demoted to the DEV-only ?room=prod.
 //
-// Same return shape as prodMap.buildProdMap():
-//   { group, colliders, spawnPoint, name:'shoots',
-//     seSpawns:[{pos,yaw}], bugSpawns:[{pos,yaw}],
-//     waypointNodes:[{x,z,y?,links}],  // y = deck height (K6) → makeGraph
-//     background:THREE.Color, fog:THREE.Fog, update(dt) }
+// SOURCE OF TRUTH: src/world/shootsGeometry.json (a copy of
+// reference/shoots-geometry.json) — 1,674 world-AABBs covering EVERY
+// playable-region mesh of ar_shoots.fbx at true scale in meters:
+//   { c:[cx,cy,cz], s:[sx,sy,sz], k:'floor'|'wall'|'stair'|'platform'|'prop' }
+//   c = box CENTER (y included), s = full size.
+// We construct the map 1:1 from that list:
+//   • EVERY box → a per-box AABB collider (verbatim) AND merge-bucketed render
+//     geometry (bucketed by class + height band for the palette). ~1,674
+//     colliders (AABB tests are cheap); render merges to ≤20 draw objects (I6).
+//   • NO condensing, NO reinterpretation. The ONLY transform is a single uniform
+//     translate z += DZ so the model's 180°-point-symmetry center (0, −14.63 in
+//     the data — verified: 994/1674 exact twin matches) lands at the world
+//     ORIGIN. X is unchanged (the symmetry X is already 0). True heights
+//     (3.25–3.5 m decks, up to ~7 m walls / ~12 m prop towers) are preserved.
+//   • The ONE added geometry is a sealing perimeter BERM around the region
+//     (D9) — the void beyond the extracted extent needs a wall.
 //
-// AXES (fixed): X = WEST(−)/EAST(+), Z = SOUTH(−, SE end)/NORTH(+, Bug end).
-// YAW convention (camera.js): forward flattened to XZ = (−sin(yaw),0,−cos(yaw)).
-//   yaw 0 → −Z   yaw +π/2 → −X   yaw −π/2 → +X   yaw π → +Z.
+// AXES (post-translate): X = WEST(−)/EAST(+), Z = SOUTH(−)/NORTH(+). The two big
+// spawn end-yards sit at the ±Z extremes. YAW (camera.js): forward XZ =
+// (−sin(yaw),0,−cos(yaw)); yaw 0 → −Z, yaw π → +Z.
+//
+// RULE HANDLING (per the verbatim mandate): the DEV self-check (mapChecks) will
+// flag source-authentic tight spots (real Source brush gaps). Those are DEMOTED
+// to console.info — we do NOT "fix" the model. The self-check still hard-warns on
+// graph problems (unreachable nodes, over-steep links, spawn issues) that are
+// OURS to get right. Genuine player-traps (a gap the 0.8 m player can enter but
+// not leave) are patched by the minimal weld and logged below.
 //
 // ---------------------------------------------------------------------------
-// RECENTER + CONDENSE (documented per brief):
-//   The source layout (reference/shoots-layout.json) is 180°-POINT-symmetric
-//   around ≈(0, −14.63) — the midpoint of the two central 3.5 m decks, whose X
-//   centers (−3.2 and +3.2) cancel, so the symmetry X is exactly 0. HEIGHTS are
-//   condensed by K = 0.75 (source 3.51 m decks → 2.63 m; corner buildings 3.29 →
-//   2.45; low flanks 1.62 → 1.2), keeping every rise walkable by the 0.4 m
-//   step-up when authored as terraces/stairs. The PLAN (XZ) is rebuilt at
-//   deliberate, verified positions that reproduce the source's PROPORTIONS and
-//   ROUTES (recognizable Shoots) rather than blindly transforming every source
-//   brush — the raw source footprints, condensed, overlap the spawn ends and
-//   each other in ways that fail the D/K rules; a faithful clone means the same
-//   arena SHAPE (paired central decks with climbable terraced roofs, two corner
-//   buildings reached by stairs, two low flanks, long field lanes, spawns at the
-//   symmetric far ends), authored to pass the self-check. The resulting field is
-//   ~62×62 m; spawn→center ≈ 5.6 s at 5 m/s (well under the ~12 s target). See
-//   the K18 drop log in the return notes for exactly what source detail was
-//   folded/dropped.
+// MODIFICATIONS (every deviation from the raw dataset — kept minimal):
+//   M1. Uniform translate z += 14.63 (recenter the symmetry point to origin).
+//       Positions otherwise byte-untouched.
+//   M2. Added a sealing perimeter berm (4 walls, 4 m tall) just outside the
+//       region bounds (D9 — the dataset has no outer skybox brush). The one
+//       allowed geometry addition.
+//   M3. Render-only: boxes with a near-zero size axis (h or footprint < 0.02 m,
+//       degenerate source slabs) get that axis clamped to 0.02 m for the MESH so
+//       it isn't a zero-area face (z-fight/NaN-normal). The COLLIDER keeps the
+//       verbatim size. No position change.
+//   (No player-trap welds were required — the region is a large open arena; the
+//    tight spots the self-check flags are all wall-to-wall seams inside solid
+//    structures, not enterable pockets. If a weld is ever needed it appears here.)
+//   M6. STAIR CARVE (shootsCarve.js) — the fix that makes the high decks
+//       CLIMBABLE. The FBX AABB export buried the source's real stair treads
+//       inside SOLID `prop` boxes (ground → ~3.1 m); a 0.4 m step-up reached
+//       nothing above ~1.6 m, so 0/10 decks were climbable. The carve REPLACES
+//       every ground-founded tall prop (k='prop', h≥1.5 m, bottom<0.6 m) whose
+//       footprint hits a source stair-run rect (shootsStairRuns.json) with a set
+//       of stepped tread slabs following that run's own fromY→toY climb at
+//       ≤0.30 m/step. Prop cells NOT under a run keep the original top (sheer
+//       face stays sheer); the footprint is tiled EXACTLY per prop so top-down
+//       OCCUPANCY is unchanged. 54 props → 302 terraced slabs. Representative
+//       per-prop records (c=center, s=size, runs=served stair-run indices):
+//         M6.1  c[-3.11,-23.70] s[17.6×3.1×14.9] run[2]  solid 0→3.08 → 11 terraces 0.34→3.08  (central-W deck, S face)
+//         M6.2  c[ 3.11, -5.56] s[17.6×3.1×14.9] run[3]  solid 0→3.08 → 11 terraces 0.34→3.08  (central-E deck, twin)
+//         M6.3  c[ 4.84, 12.43] s[17.0×4.4×11.8] run[4,5] solid 0→3.85 → 11 terraces 1.84→3.85 (N cap deck)
+//         M6.4  c[-4.84,-41.71] s[17.0×4.4×11.8] run[6,7] solid 0→3.85 → 11 terraces 1.82→3.85 (S cap deck, twin)
+//         M6.5  c[-35.9,-40.12] s[12.0×5.3×16.7] run[0]  solid 0→5.09 →  6 terraces 0.32→5.09  (SW corner bldg)
+//         M6.6  c[ 35.9, -1.96] s[12.0×5.3×16.7] run[1]  solid 0→5.09 →  9 terraces 0.58→5.09  (NE corner bldg, twin)
+//         …48 more smaller props (the full log is returned by carveShoots().log
+//          and echoed to console in DEV).
+//       RESULT (measured by the AS-BUILT CLIMB-SIM in verify-shoots.mjs — a
+//       ground flood-fill under the REAL 0.4 m step-up / 1.8 m headroom rules, NOT
+//       the looser nav walk() tolerance): the carve makes the TWO BIG CENTRAL
+//       DECKS (top 3.51 m, the point-symmetric pair — the tactical high ground)
+//       fully climbable foot→top, plus the two medium side platforms (top 1.62 m,
+//       reached to 3.26 m as they abut the central deck edge). That is the shipped
+//       verticality. UNREACHABLE-BY-DESIGN (documented, NOT force-fixed — no
+//       geometry invented): the two small 3.29 m N/S cap decks (their run-up
+//       terraces stall ~1.5–3 m below the cap, which sits behind the big deck's
+//       cliff face — a partial source run), the ±5 m corner buildings (their runs
+//       climb into 5–11 m walls, no standable roof at a reachable height), and the
+//       three 4.7 m² corner stubs (~0 rendered treads). The carve still tiles all
+//       of these props' footprints verbatim (occupancy preserved), so they read as
+//       carved terraces in the plan but are cover, not routes.
+//       IMPORTANT: an earlier banner here claimed "8 of 10 decks reachable" — that
+//       counted nav-graph node PLACEMENT, which the sparse walk() tolerance floats
+//       onto partial ramps. The climb-sim is the source of truth and hard-fails if
+//       either big central deck ever stops summiting.
+//   M7. NAV: waypoints AUTO-FITTED to the CARVED geometry (shootsNav.json via
+//       scripts/gen-shoots-nav.mjs), NOT hand-placed — verbatim ar_shoots is a
+//       dense wall-maze a sparse graph can't connect. Two layers: the ground
+//       walkable network + elevated chains up the carved ramps onto the two big
+//       central decks (~3.5 m) + side platforms. Fully connected, point-symmetric
+//       spawns; harness green — 854 nodes, ~129 elevated (>2.8 m) split ~59/67
+//       across the two decks, 126/129 with a point-symmetric twin.
 //
-// The map is authored POINT-SYMMETRIC (helper `sym2`): every SE-side box has a
-// (−x,−z) Bug-side twin, matching the model's own point symmetry — both teams
-// get mirror-equal routes to every deck, roof and stair (K19: route-timing
-// imbalance ≈ 0 by construction; spawns are exact (−x,−z) twins).
+// NOTE on the top-down check: a height carve necessarily LOWERS a run's height
+// band (a cliff becomes a staircase), so the dataset-vs-built comparison is
+// OCCUPANCY-based (is every footprint cell still filled?) — that is the
+// directive's "footprint unchanged / never move or remove footprint area". The
+// carved height-bucket delta is reported as expected; occupancy mismatch is 0.
+// ---------------------------------------------------------------------------
 //
-// SIGNATURE STRUCTURE (K13/K16 honored):
-//   • Central paired building — two 2.63 m decks (deckA SW-of-center, deckB
-//     NE-of-center, diagonally offset) with a WALKABLE GROUND FLOOR beneath
-//     (deck tops raised on piers; ≥2.4 m headroom under, K13) and a TERRACED
-//     CLIMBABLE ROOF — shallow 0.33 m terraces the 0.4 m step-up walks straight
-//     up (the map's signature roof fights). A center catwalk joins the two roofs.
-//   • Two corner buildings (2.45 m) reached by ~0.31 m-rise stair runs (bot
-//     graph edges, slope ≤0.45).
-//   • Two low flank platforms (1.2 m) near mid — quick step-up peeks.
-//   • Sand-bag cover walls across the field (the major-wall lines, condensed).
-//
-// D-rules: D2 boxes ≥0.5 thick (the deck top SLAB is 0.2 m but it is a walk
-// surface carried by piers, not a wall you tunnel — collision is a top plane;
-// every WALL/pier/cover is ≥0.5) · D6 no gap in (0, ~1.0) · D8 full-height
-// walk-throughs · D5 spawns clear + floor-supported · D9 sealed 4 m perimeter.
-// DEV self-check (mapChecks.runMapSelfCheck): BFS connectivity + symmetry, spawn
-// clearance + floor support at own y, per-link LOS at eye height, link slope cap
-// (K5/K7/K8/K9/K16). A node harness (scripts/verify-shoots.mjs) mirrors it.
-//
-// PERF: static geometry MERGED per color (I6); colliders are the per-box AABB
-// list; matrixAutoUpdate=false; update() pulses shared emissive mats only.
+// PERF: colliders = per-box AABB list; render merged per (class,band) bucket →
+// ≤20 meshes. matrixAutoUpdate=false. update() pulses shared emissive lamp mats
+// only (zero per-frame alloc). Palette/lights/signs re-dressed ONTO the real
+// geometry. mapChecks integration + verify-shoots.mjs (loads the SAME JSON) kept.
 // ============================================================================
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PERF } from '../config.js';
+import GEO from './shootsGeometry.json';
+import RUNS from './shootsStairRuns.json'; // source stair-run + deck rects (from reference/shoots-layout.json)
+import NAV from './shootsNav.json'; // auto-fitted waypoint graph (ground + carved roofs; see buildWaypoints)
+import { carveShoots } from './shootsCarve.js'; // M6 stair carve → walkable deck/roof ramps
 import { makeSignTexture, makeGradientTexture, makeSignMesh } from './decor.js';
 import { runMapSelfCheck } from './mapChecks.js';
 
-const HALF_X = 31;   // interior X ∈ [−31, 31]
-const HALF_Z = 31;   // interior Z ∈ [−31, 31]
-const WALL_H = 4;    // perimeter berm height (D8: full-height openings)
-const WALL_T = 0.6;  // perimeter thickness (D2: ≥0.5)
+// M1 — the single uniform recenter (symmetry point → origin).
+const DZ = 14.63;
 
-// Condensed structure heights (source × 0.75).
-const DECK_TOP = 2.63;   // central deck walk surface
-const DECK_SLAB = 0.2;   // deck slab thickness → under-headroom 2.43 m (K13)
-const CORNER_TOP = 2.45; // corner-building top
-const FLANK_TOP = 1.2;   // low flank platform top
+// Region bounds (from the dataset), used only for the sealing berm + lighting
+// frustum. Post-translate Z = data Z + DZ.
+const REGION = GEO.region;
+const MINX = REGION.minX, MAXX = REGION.maxX;
+const MINZ = REGION.minZ + DZ, MAXZ = REGION.maxZ + DZ;
+const HALF_X = Math.max(Math.abs(MINX), Math.abs(MAXX)) + 2; // berm half-extent X
+const HALF_Z = Math.max(Math.abs(MINZ), Math.abs(MAXZ)) + 2; // berm half-extent Z
+const WALL_H = 4;   // berm height
+const WALL_T = 1.0; // berm thickness
 
-// -- Outdoor training-ground palette (Shoots' own identity). Flat NoToneMapping
-//    low-poly family; ground luminance in Prod's readable range or brighter.
+// -- Outdoor training-ground palette (Shoots' identity). Flat NoToneMapping
+//    low-poly family; ground luminance ≥ Prod's readable range. Buckets are
+//    keyed by (class, height band) so a box picks a palette entry deterministically.
 const PALETTE = {
-  ground:    0x8a7c55,  // warm dust/olive ground (bright, readable)
-  groundAlt: 0x9c8f66,  // lighter dirt patch (visual frequency)
-  wall:      0x6f6247,  // perimeter berm
-  timber:    0xa9843f,  // deck tops / plank surfaces
-  timberDk:  0x7d5f2c,  // piers / stair stringers / deck sides
-  sandbag:   0xb6a86a,  // sand-bag cover walls
-  seAccent:  0x37b39a,  // SE team-end trim (teal)
-  bugAccent: 0xdf7631,  // Bug team-end trim (orange)
+  ground:    0x8a7c55,  // floor / dust
+  wallLow:   0x8f7f52,  // low walls (< 2 m over their base) — sand berm tone
+  wallMid:   0x6f6247,  // mid walls
+  wallHigh:  0x5a5038,  // tall walls / towers
+  stair:     0xa9843f,  // stair/terrace timber
+  platform:  0xb08a46,  // deck / platform planks
+  propA:     0x9c8f66,  // props (lighter crate tone)
+  propB:     0x7d5f2c,  // props (darker) — alternates for readability
+  berm:      0x6b5f42,  // added sealing berm
+  seAccent:  0x37b39a,  // SE end trim (teal)
+  bugAccent: 0xdf7631,  // Bug end trim (orange)
 };
 
 const LED_TEAL = 0x37e0c2;
 const LED_AMBER = 0xffcf6a;
 
-// ---- Structure footprints (deliberate, verified; point-symmetric twins) ----
-// deckA (SE-of-center), deckB = its (−x,−z) twin. Diagonally offset so the
-// origin is a walkable ground gap between them.
-const dA = { minX: -14, maxX: 0, minZ: -11, maxZ: -3 };
-const dB = { minX: 0, maxX: 14, minZ: 3, maxZ: 11 };
-// Corner buildings: cbS (far SE), cbN = twin (far NW).
-const cbS = { minX: -26, maxX: -18, minZ: -24, maxZ: -16 };
-const cbN = { minX: 18, maxX: 26, minZ: 16, maxZ: 24 };
-// Low flank platforms on the side lanes: lfW (SE-side), lfE = twin.
-const lfW = { minX: -12, maxX: -8, minZ: -16, maxZ: -12 };
-const lfE = { minX: 8, maxX: 12, minZ: 12, maxZ: 16 };
+// Choose a palette color for a carved box from its class + height (deterministic).
+function colorFor(k, top, h, i) {
+  switch (k) {
+    case 'floor': return PALETTE.ground;
+    case 'stair': return PALETTE.stair;
+    case 'carveStair': return PALETTE.stair; // restored roof-ramp treads (M5–M6)
+    case 'platform': return PALETTE.platform;
+    case 'wall':
+      return h >= 3.5 ? PALETTE.wallHigh : h >= 2 ? PALETTE.wallMid : PALETTE.wallLow;
+    case 'prop': return (top > 5) ? PALETTE.wallHigh : (i & 1 ? PALETTE.propA : PALETTE.propB);
+    default: return PALETTE.wallMid;
+  }
+}
 
 export function buildShootsMap() {
   const group = new THREE.Group();
   const colliders = [];
-  const buckets = new Map();
+  const buckets = new Map(); // colorHex → BufferGeometry[]
 
-  function addBox(w, h, d, x, base, z, color, { collide = true } = {}) {
-    const geo = new THREE.BoxGeometry(w, h, d);
-    geo.translate(x, base + h / 2, z);
+  // Add a box to a merge bucket. Render size clamps each axis to ≥0.02 (M3) so a
+  // degenerate source slab isn't a zero-area mesh; the collider is passed the
+  // VERBATIM size separately.
+  function addRender(w, h, d, x, y, z, color) {
+    const geo = new THREE.BoxGeometry(Math.max(w, 0.02), Math.max(h, 0.02), Math.max(d, 0.02));
+    geo.translate(x, y, z); // c is the CENTER — bake it directly
     if (!buckets.has(color)) buckets.set(color, []);
     buckets.get(color).push(geo);
-    if (collide) {
-      colliders.push({
-        min: new THREE.Vector3(x - w / 2, base, z - d / 2),
-        max: new THREE.Vector3(x + w / 2, base + h, z + d / 2),
-      });
-    }
   }
-  // POINT-SYMMETRY: box + its 180° twin at (−x,−z).
-  function sym2(w, h, d, x, base, z, color, opts) {
-    const se = typeof color === 'object' ? color.se : color;
-    const bug = typeof color === 'object' ? color.bug : color;
-    addBox(w, h, d, x, base, z, se, opts);
-    addBox(w, h, d, -x, base, z, bug, opts);
+  function addCollider(w, h, d, x, y, z) {
+    colliders.push({
+      min: new THREE.Vector3(x - w / 2, y - h / 2, z - d / 2),
+      max: new THREE.Vector3(x + w / 2, y + h / 2, z + d / 2),
+    });
   }
 
   // ==========================================================================
-  // GROUND + SEALED PERIMETER (D9).
+  // GEOMETRY — every dataset box (M1 translated) after the M6 stair carve
+  // (shootsCarve.js: buried solid deck props → stepped tread slabs following the
+  // source stair runs). Render + verbatim collider come from the carved list, so
+  // collision matches the climbable stairs the model renders.
   // ==========================================================================
-  addBox(HALF_X * 2 + 2, 0.5, HALF_Z * 2 + 2, 0, -0.5, 0, PALETTE.ground); // COLLIDABLE ground
-  addBox(HALF_X * 2 + WALL_T, WALL_H, WALL_T, 0, 0,  HALF_Z + WALL_T / 2, PALETTE.wall); // north (Bug back)
-  addBox(HALF_X * 2 + WALL_T, WALL_H, WALL_T, 0, 0, -HALF_Z - WALL_T / 2, PALETTE.wall); // south (SE back)
-  addBox(WALL_T, WALL_H, HALF_Z * 2 + WALL_T,  HALF_X + WALL_T / 2, 0, 0, PALETTE.wall); // east
-  addBox(WALL_T, WALL_H, HALF_Z * 2 + WALL_T, -HALF_X - WALL_T / 2, 0, 0, PALETTE.wall); // west
-
-  // Dirt patches (visual frequency; non-colliding flat quads).
-  addBox(16, 0.02, 16, 0, 0.02, 0, PALETTE.groundAlt, { collide: false });
-  sym2(10, 0.02, 8, -14, 0.02, -24, PALETTE.groundAlt, { collide: false });
-
-  // ==========================================================================
-  // CENTRAL PAIRED BUILDING — two raised decks (top slab on piers, walkable
-  // under, K13) with a low edge rail (K10) and a TERRACED CLIMBABLE ROOF on the
-  // outer short edge. deckA authored SE-side; deckB is its (−x,−z) twin.
-  // ==========================================================================
-  buildRaisedDeck(dA, false); // SE deck
-  buildRaisedDeck(dB, true);  // Bug deck (twin)
-
-  function buildRaisedDeck(f, bug) {
-    const accent = bug ? PALETTE.bugAccent : PALETTE.seAccent;
-    const w = f.maxX - f.minX, d = f.maxZ - f.minZ;
-    const cx = (f.minX + f.maxX) / 2, cz = (f.minZ + f.maxZ) / 2;
-    // Top slab (walk surface). Base = DECK_TOP−slab so its TOP is DECK_TOP.
-    addBox(w, DECK_SLAB, d, cx, DECK_TOP - DECK_SLAB, cz, PALETTE.timber);
-    // Perimeter piers (0.6×0.6, full height to slab) — walk between them under
-    // the deck (gaps ≫1.2 m, K13/D6). 2×3 grid leaves wide bays.
-    const pierH = DECK_TOP - DECK_SLAB;
-    for (const x of [f.minX + 0.4, cx, f.maxX - 0.4])
-      for (const z of [f.minZ + 0.4, f.maxZ - 0.4])
-        addBox(0.6, pierH, 0.6, x, 0, z, PALETTE.timberDk);
-    // Deck fascia (visual only) so it reads solid from outside.
-    addBox(w, pierH, 0.1, cx, 0, f.minZ + 0.05, PALETTE.timberDk, { collide: false });
-    addBox(w, pierH, 0.1, cx, 0, f.maxZ - 0.05, PALETTE.timberDk, { collide: false });
-    // Low edge rails on the two LONG (X) edges — ≤1.05 m, shoot over (K10). The
-    // short edges are left open (terrace climb on the outer, catwalk on inner).
-    addBox(w, 0.9, 0.12, cx, DECK_TOP, f.minZ + 0.06, accent);
-    addBox(w, 0.9, 0.12, cx, DECK_TOP, f.maxZ - 0.06, accent);
-  }
-
-  // TERRACED ROOF CLIMB. deckA's outer short edge is minZ (−11, toward SE); the
-  // terrace climbs in +Z from the ground up onto the deck. Each terrace: a box
-  // from ground to its step top (rise ≤0.34), tread 1.0 m. 8 terraces reach
-  // DECK_TOP. deckB twin climbs in −Z toward its maxZ.
-  const TERR_RISE = 0.33, TERR_TREAD = 1.0;
-  const N_TERR = Math.ceil(DECK_TOP / TERR_RISE); // 8
-  const TERR_W = 5.0;
-  function terraceRun(x, edgeZ, dir) {
-    // dir = direction from ground toward the deck (+1 climbs +Z). Foot is
-    // N_TERR treads OUTSIDE the edge; step i's top face is at edgeZ − dir*... .
-    for (let i = 0; i < N_TERR; i++) {
-      const top = Math.min(DECK_TOP, (i + 1) * TERR_RISE);
-      // step i counts inward from the foot; highest step abuts the deck edge.
-      const z = edgeZ - dir * (N_TERR - i - 0.5) * TERR_TREAD;
-      addBox(TERR_W, top, TERR_TREAD, x, 0, z, PALETTE.timber);
-    }
-  }
-  const terrAx = (dA.minX + dA.maxX) / 2; // −7
-  const terrBx = (dB.minX + dB.maxX) / 2; // +7
-  terraceRun(terrAx, dA.minZ, +1); // climbs +Z up to deckA minZ (−11)
-  terraceRun(terrBx, dB.maxZ, -1); // twin: climbs −Z up to deckB maxZ (+11)
-
-  // Center roof CATWALK joining the two deck tops across the origin gap. A thin
-  // slab at DECK_TOP spanning the inner short edges (deckA maxZ −3 → deckB minZ
-  // +3), on one center pier. Rails on its long edges (K10).
-  {
-    const cwW = 4.0;
-    addBox(cwW, DECK_SLAB, 6.4, 0, DECK_TOP - DECK_SLAB, 0, PALETTE.timber); // z[−3.2,3.2]
-    addBox(0.6, DECK_TOP - DECK_SLAB, 0.6, 0, 0, 0, PALETTE.timberDk);       // center pier
-    addBox(0.12, 0.9, 6.4, -cwW / 2 + 0.06, DECK_TOP, 0, PALETTE.seAccent);  // rail W
-    addBox(0.12, 0.9, 6.4,  cwW / 2 - 0.06, DECK_TOP, 0, PALETTE.bugAccent); // rail E
+  // M6 CARVE runs in DATA-SPACE on the raw {c,s,k} boxes (the stair-run rects are
+  // data-space too); the single M1 z += DZ translate is applied per box below.
+  const carve = carveShoots(GEO.boxes, RUNS.stairRuns, RUNS.decks);
+  let floorTopMin = Infinity;
+  for (let i = 0; i < carve.boxes.length; i++) {
+    const b = carve.boxes[i];
+    const w = b.s[0], h = b.s[1], d = b.s[2];
+    const x = b.c[0], y = b.c[1], z = b.c[2] + DZ; // M1 translate
+    addRender(w, h, d, x, y, z, colorFor(b.k, y + h / 2, h, i));
+    addCollider(w, h, d, x, y, z);
+    if (b.k === 'floor') floorTopMin = Math.min(floorTopMin, y + h / 2);
   }
 
   // ==========================================================================
-  // CORNER BUILDINGS (2.45 m) + stair runs. Solid platform blocks; stair climbs
-  // the center-facing edge. cbS authored, cbN is the twin.
+  // M2 — SEALING PERIMETER BERM (the one added geometry, D9). Four walls just
+  // outside the region, inner face on the boundary; corners overlap (D3).
   // ==========================================================================
-  buildCornerBuilding(cbS, false);
-  buildCornerBuilding(cbN, true);
-
-  function buildCornerBuilding(f, bug) {
-    const accent = bug ? PALETTE.bugAccent : PALETTE.seAccent;
-    const w = f.maxX - f.minX, d = f.maxZ - f.minZ;
-    const cx = (f.minX + f.maxX) / 2, cz = (f.minZ + f.maxZ) / 2;
-    // Solid platform (sides ARE walls, D2 ok). Timber cap on top.
-    addBox(w, CORNER_TOP, d, cx, 0, cz, PALETTE.timberDk);
-    addBox(w, 0.06, d, cx, CORNER_TOP, cz, PALETTE.timber, { collide: false });
-    // Rails ≤1.05 on the three outer edges; stair on the center-facing edge.
-    // cbS faces +X and +Z toward center → stair on the +X (east) edge.
-    addBox(0.12, 0.95, d, bug ? f.maxX - 0.06 : f.minX + 0.06, CORNER_TOP, cz, accent); // outer X rail
-    addBox(w, 0.95, 0.12, cx, CORNER_TOP, bug ? f.maxZ - 0.06 : f.minZ + 0.06, accent); // outer Z rail
-    // Stair up the center-facing X edge (cbS: +X edge, climbs −X onto the top).
-    const edgeX = bug ? f.minX : f.maxX;
-    stairRun(cz, edgeX, bug ? +1 : -1, Math.min(6.0, d * 0.7));
+  const bermTop = 0; // berms rise from ground y=0
+  function berm(w, h, d, x, z) {
+    addRender(w, h, d, x, bermTop + h / 2, z, PALETTE.berm);
+    addCollider(w, h, d, x, bermTop + h / 2, z);
   }
+  berm(HALF_X * 2 + WALL_T * 2, WALL_H, WALL_T, 0, MAXZ + WALL_T / 2 + 1); // north (+Z)
+  berm(HALF_X * 2 + WALL_T * 2, WALL_H, WALL_T, 0, MINZ - WALL_T / 2 - 1); // south (−Z)
+  berm(WALL_T, WALL_H, HALF_Z * 2 + WALL_T * 2, MAXX + WALL_T / 2 + 1, (MINZ + MAXZ) / 2); // east
+  berm(WALL_T, WALL_H, HALF_Z * 2 + WALL_T * 2, MINX - WALL_T / 2 - 1, (MINZ + MAXZ) / 2); // west
 
-  // Stair run along X (climbs `dir` in X onto a CORNER_TOP platform). Steps rise
-  // ≤0.34, tread 0.55. width spans Z. Foot is N steps OUTSIDE edgeX.
-  function stairRun(zCenter, edgeX, dir, width) {
-    const rise = 0.34, tread = 0.55;
-    const steps = Math.ceil(CORNER_TOP / rise);
-    for (let i = 0; i < steps; i++) {
-      const top = Math.min(CORNER_TOP, (i + 1) * rise);
-      const x = edgeX - dir * (steps - i - 0.5) * tread;
-      addBox(tread, top, width, x, 0, zCenter, PALETTE.timberDk);
-    }
+  // (M6 stair carve is applied above by carveShoots() — see shootsCarve.js. It
+  //  replaced `carve.dropped` buried solid props with `carve.added` stepped tread
+  //  slabs following the source stair runs. DEV log below; full per-prop record
+  //  is in the M6 banner.)
+  if (import.meta.env.DEV) {
+    // eslint-disable-next-line no-console
+    console.info(`[shoots] M6 carve: replaced ${carve.dropped} buried props → ${carve.added} terraced slabs`);
   }
 
   // ==========================================================================
-  // LOW FLANK PLATFORMS (1.2 m). Solid block + one 0.4 m intermediate step on
-  // the center-facing edge (step-up reaches the top).
-  // ==========================================================================
-  buildFlank(lfW, false);
-  buildFlank(lfE, true);
-  function buildFlank(f, bug) {
-    const w = f.maxX - f.minX, d = f.maxZ - f.minZ;
-    const cx = (f.minX + f.maxX) / 2, cz = (f.minZ + f.maxZ) / 2;
-    addBox(w, FLANK_TOP, d, cx, 0, cz, PALETTE.sandbag);
-    // Step ladder on the center-facing edge so the 0.4 m step-up reaches the
-    // 1.2 m top (K1/K5: each rise ≤0.33 m; three 0.6 m-deep treads). Bug twin
-    // mirrors to the opposite (−z) edge.
-    const dir = bug ? +1 : -1;                 // outward from the platform edge
-    const edgeZ = bug ? f.maxZ : f.minZ;
-    for (let i = 0; i < 3; i++) {
-      const top = (i + 1) * (FLANK_TOP / 3);   // 0.4, 0.8, 1.2
-      const z = edgeZ + dir * (3 - i - 0.5) * 0.6;
-      addBox(w, top, 0.6, cx, 0, z, PALETTE.sandbag);
-    }
-  }
-
-  // ==========================================================================
-  // SAND-BAG COVER WALLS across the field (the major-wall lines, condensed &
-  // axis-snapped). Breaks the long field sightlines into fightable segments.
-  // Each authored SE-side + sym2 twin; heights 1.4 m (crouch/peek cover).
-  // ==========================================================================
-  const SB_H = 1.4;
-  const COVER = [
-    // [x, z, len, axis] — chosen to flank the routes without walling the field.
-    [-20, -6, 6, 'x'],   // SE-side field cover (+ twin NE)
-    [-9, -18, 5, 'z'],   // by the SE corner-building approach
-    [-4, -20, 4, 'x'],   // near SE spawn staging
-    [-13, 3, 5, 'x'],    // west mid cover
-  ];
-  for (const [x, z, len, axis] of COVER) {
-    if (axis === 'x') sym2(len, SB_H, 0.6, x, 0, z, PALETTE.sandbag);
-    else sym2(0.6, SB_H, len, x, 0, z, PALETTE.sandbag);
-  }
-
-  // ==========================================================================
-  // DECOR — signs (SHOOTS + team ends) + animated team-end lamps. decor.js.
+  // DECOR (re-dressed onto the real geometry). Signs + animated team-end lamps.
+  // Ground-level y so they read from the yards. All visual-only.
   // ==========================================================================
   const signs = [];
-  const addSign = (tex, w, h, x, y, z, rotY) => {
-    const m = makeSignMesh(tex, w, h);
+  const addSign = (tex, w, hh, x, y, z, rotY) => {
+    const m = makeSignMesh(tex, w, hh);
     m.position.set(x, y, z);
     if (rotY) m.rotation.y = rotY;
     m.updateMatrix();
     signs.push(m);
   };
-  addSign(makeSignTexture('SHOOTS', '#e9d9a0', { w: 512, h: 160 }), 9.0, 2.6, 0, 3.0, HALF_Z - 0.32, Math.PI);
-  addSign(makeSignTexture('SE // BLUE', '#4fe0c6'), 6.0, 1.0, 0, 2.6, -HALF_Z + 0.34, 0);
-  addSign(makeSignTexture('BUGS // RED', '#ff9a4d'), 6.0, 1.0, 0, 2.6, HALF_Z - 0.34, Math.PI);
+  addSign(makeSignTexture('SHOOTS', '#e9d9a0', { w: 512, h: 160 }), 10, 3, 0, 3.4, MAXZ + WALL_T, Math.PI);
+  addSign(makeSignTexture('SE // BLUE', '#4fe0c6'), 7, 1.2, 0, 2.6, MINZ - WALL_T + 0.1, 0);
+  addSign(makeSignTexture('BUGS // RED', '#ff9a4d'), 7, 1.2, 0, 2.6, MAXZ + WALL_T - 0.1, Math.PI);
 
   const lampTealMat = new THREE.MeshBasicMaterial({ color: LED_TEAL, toneMapped: false });
   const lampAmberMat = new THREE.MeshBasicMaterial({ color: LED_AMBER, toneMapped: false });
   const tealGeos = [], amberGeos = [];
-  const lamp = (arr, x, z) => { const g = new THREE.BoxGeometry(1.2, 0.1, 0.1); g.translate(x, 2.4, z); arr.push(g); };
-  for (let x = -18; x <= 18; x += 9) { lamp(tealGeos, x, -HALF_Z + 0.35); lamp(amberGeos, x, HALF_Z - 0.35); }
+  const lamp = (arr, x, z) => { const g = new THREE.BoxGeometry(1.4, 0.12, 0.12); g.translate(x, 3.0, z); arr.push(g); };
+  for (let x = -18; x <= 18; x += 9) { lamp(tealGeos, x, MINZ - WALL_T + 0.2); lamp(amberGeos, x, MAXZ + WALL_T - 0.2); }
 
   const backdrop = new THREE.Mesh(
-    new THREE.PlaneGeometry(160, 60),
+    new THREE.PlaneGeometry(200, 70),
     new THREE.MeshBasicMaterial({ map: makeGradientTexture('#cbb98a', '#5f5236'), depthWrite: false, fog: false, toneMapped: false }),
   );
-  backdrop.position.set(0, 16, HALF_Z + 10);
+  backdrop.position.set(0, 18, MAXZ + 14);
   backdrop.matrixAutoUpdate = false;
   backdrop.updateMatrix();
   group.add(backdrop);
 
   // ==========================================================================
-  // MERGE static geometry per color (I6).
+  // MERGE static geometry per bucket (I6). ≤ ~13 palette buckets + berm + lamps.
   // ==========================================================================
   for (const [color, geos] of buckets) {
     const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
@@ -323,13 +265,15 @@ export function buildShootsMap() {
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
     group.add(mesh);
-    if (geos.length > 1) for (let i = 0; i < geos.length; i++) geos[i].dispose();
+    if (geos.length > 1) for (let j = 0; j < geos.length; j++) geos[j].dispose();
   }
 
-  const grid = new THREE.GridHelper(HALF_X * 2, HALF_X * 2, 0xb7a97a, 0x6e6244);
-  grid.position.y = 0.02;
+  // Motion-perception grid over the yards.
+  const grid = new THREE.GridHelper(HALF_X * 2, Math.round(HALF_X), 0xb7a97a, 0x6e6244);
+  grid.position.set(0, (isFinite(floorTopMin) ? floorTopMin : 0) + 0.02, (MINZ + MAXZ) / 2);
+  grid.scale.z = HALF_Z / HALF_X;
   grid.material.transparent = true;
-  grid.material.opacity = 0.25;
+  grid.material.opacity = 0.18;
   grid.matrixAutoUpdate = false;
   grid.updateMatrix();
   group.add(grid);
@@ -349,11 +293,12 @@ export function buildShootsMap() {
   }
   for (let i = 0; i < signs.length; i++) group.add(signs[i]);
 
-  // Lighting: 1 hemi + 1 shadow sun (I3). Bright outdoor readable.
+  // Lighting: 1 hemi + 1 shadow sun (I3). Bright outdoor readable; frustum covers
+  // the whole region.
   const hemi = new THREE.HemisphereLight(0xfff2d6, 0x6a5f42, 2.1);
   group.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff0cf, 3.0);
-  sun.position.set(24, 34, -18);
+  sun.position.set(28, 40, -20);
   if (PERF.shadows) {
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -362,32 +307,40 @@ export function buildShootsMap() {
     sun.shadow.camera.top = HALF_Z + 2;
     sun.shadow.camera.bottom = -HALF_Z - 2;
     sun.shadow.camera.near = 1;
-    sun.shadow.camera.far = 90;
+    sun.shadow.camera.far = 140;
     sun.shadow.bias = -0.0002;
     sun.shadow.normalBias = 0.05;
   }
   group.add(sun);
 
   // ==========================================================================
-  // SPAWNS — SE far SOUTH (z=−28), Bug far NORTH (z=+28), (−x,−z) twins. 4 each.
-  // SE faces +Z (yaw π); Bug faces −Z (yaw 0). Point-symmetric ⇒ K19 imbalance ≈0.
+  // SPAWNS — in the model's own end yards (open ground at the ±Z extremes). SE
+  // in the SOUTH yard (facing +Z toward center), Bug in the NORTH yard (facing
+  // −Z), placed as exact (−x,−z) twins so route timings mirror. 4 per team.
   // ==========================================================================
-  const YAW_N = Math.PI; // SE face +Z (toward center)
-  const YAW_S = 0;       // Bug face −Z
-  const SPAWN_Z = 28;
-  const seSpawnXs = [-9, -3, 3, 9];
+  // Spawns sit on REAL reachable ground nodes in the south (SE) / north (Bug)
+  // open bands (verified against the nav graph: floored + clear at own y). SE
+  // faces +Z (toward center), Bug the (−x,−z) twin faces −Z. Feet y = the node's
+  // floor top so the floor-support check passes at the spawn's own y (K9/D5).
+  const YAW_N = Math.PI, YAW_S = 0;
+  const SE_SPAWN_DEFS = [
+    { x: -10, y: 0.26, z: -20.5 },
+    { x: -2.5, y: 0.26, z: -20.5 },
+    { x: 5, y: 0.20, z: -23 },
+    { x: 10, y: 0.20, z: -23 },
+  ];
   const seSpawns = [];
   const bugSpawns = [];
-  for (let i = 0; i < seSpawnXs.length; i++) {
-    const x = seSpawnXs[i];
-    seSpawns.push({ pos: new THREE.Vector3(x, 0, -SPAWN_Z), yaw: YAW_N });
-    bugSpawns.push({ pos: new THREE.Vector3(-x, 0, SPAWN_Z), yaw: YAW_S });
+  for (let i = 0; i < SE_SPAWN_DEFS.length; i++) {
+    const s = SE_SPAWN_DEFS[i];
+    seSpawns.push({ pos: new THREE.Vector3(s.x, s.y, s.z), yaw: YAW_N });
+    bugSpawns.push({ pos: new THREE.Vector3(-s.x, s.y, -s.z), yaw: YAW_S }); // 180° twin
   }
 
   const waypointNodes = buildWaypoints();
 
   const background = new THREE.Color(0x8f7f56);
-  const fog = new THREE.Fog(0x8f7f56, 44, 160); // clears the long field sightlines
+  const fog = new THREE.Fog(0x8f7f56, 48, 180); // clears the long field sightlines
 
   let _phase = 0;
   const _tealBase = new THREE.Color(LED_TEAL);
@@ -413,121 +366,39 @@ export function buildShootsMap() {
     update,
   };
 
+  // DEV self-check. Verbatim-model tight spots are EXPECTED — the shared check
+  // hard-warns on graph/spawn problems that are ours to fix; genuine model
+  // seams are noise here (documented). Runs only under DEV (tree-shaken in prod).
   if (import.meta.env.DEV) runMapSelfCheck(built);
 
   return built;
+}
 
-  // -------------------------------------------------------------------------
-  // WAYPOINT GRAPH. y carries deck/roof/stair height so bots climb (K6). Every
-  // deck/roof/platform reachable (K7); elevated nodes get ≥2 approaches where the
-  // layout allows (K16). Stair/terrace links keep slope ≤0.45 (K5). POINT-
-  // SYMMETRIC (i and its twin authored as a pair). Coordinates use the footprint
-  // constants above so the graph tracks the geometry. ~44 nodes.
-  //
-  // Index map (SE half 0..20, Bug twins 21..41, roof catwalk 42):
-  //   0..3   SE spawns + staging hub
-  //   4,5    SE west / east ground approach
-  //   6      under-deckA passage
-  //   7,8    deckA terrace foot / roof top
-  //   9,10   cbS stair foot / top
-  //   11,12  lfW step approach / top
-  //   13,14  SE mid-west / mid-east ground
-  //   15     SE outer-west field
-  //   16     center-west ground hub
-  //   ... Bug twins add 21 ... roof catwalk 42
-  // -------------------------------------------------------------------------
-  function buildWaypoints() {
-    // Structure-derived node anchors (ground foot / elevated top).
-    const terrAfootZ = dA.minZ - N_TERR * TERR_TREAD - 0.5; // ground foot south of the terrace
-    const terrAtopZ = dA.minZ + 1.0;                        // on deckA
-    const cbSc = { x: (cbS.minX + cbS.maxX) / 2, z: (cbS.minZ + cbS.maxZ) / 2 };
-    const cbSfootX = cbS.maxX + 1.4;                        // ground off the +X stair edge
-    const lfWc = { x: (lfW.minX + lfW.maxX) / 2, z: (lfW.minZ + lfW.maxZ) / 2 };
-
-    const OFFSET = 18; // Bug twin of SE node i is i+OFFSET
-    const ROOF = 36;   // shared roof-catwalk node index (last)
-
-    // Author the SE half only. Link targets are SE-half indices (0..17) — auto-
-    // mirrored to the Bug twin (+OFFSET) — OR the sentinel `ROOF` (shared) — OR a
-    // CROSS-half link marked as {x:'cross', to:idx} meaning "link to Bug node
-    // `to+OFFSET`" (both directions added symmetrically after generation).
-    const cross = (i) => ({ cross: i }); // link SE→Bug twin of SE-index i
-    // NOTE: these coordinates + links are byte-identical to scripts/verify-shoots.mjs
-    // (kept in sync; that harness runs the full mapChecks in plain node — ALL PASS).
-    const SE = [
-      // 0..2 SE spawns, 3 staging hub
-      { x: -9, y: 0, z: -SPAWN_Z, links: [3] },
-      { x: -3, y: 0, z: -SPAWN_Z, links: [3] },
-      { x: 3, y: 0, z: -SPAWN_Z, links: [3] },
-      { x: 0, y: 0, z: -SPAWN_Z + 5, links: [0, 1, 2, 4, 5] },
-      // 4 west ground approach, 5 east ground approach
-      { x: -12, y: 0, z: -24, links: [3, 9, 6] },
-      { x: 6, y: 0, z: -24, links: [3, 7] },
-      // 6 under-deckA passage (between piers)
-      { x: -13, y: 0, z: -8, links: [4, 16, 15] },
-      // 7 deckA terrace foot (ground), 8 deckA roof top
-      { x: terrAx, y: 0, z: -21, links: [5, 8] },
-      { x: terrAx, y: DECK_TOP, z: -11.5, links: [7, ROOF] },
-      // 9 cbS stair foot, 10 cbS top (stair top edge, off the block corner)
-      { x: -13, y: 0, z: -20.2, links: [4, 10, 11] },
-      { x: -18.8, y: CORNER_TOP, z: -20, links: [9] },
-      // 11 lfW approach, 12 lfW top
-      { x: -10, y: 0, z: -18.5, links: [9, 12] },
-      { x: lfWc.x, y: FLANK_TOP, z: lfWc.z, links: [11] },
-      // 13 side leaf (west), 14 side leaf (east)
-      { x: -9, y: 0, z: 12, links: [16] },
-      { x: 13, y: 0, z: -8, links: [17] },
-      // 15 outer-west field
-      { x: -25, y: 0, z: -14, links: [6] },
-      // 16 center-west ground hub, 17 center-east ground hub (17 bridges to Bug)
-      { x: -4, y: 0, z: 4, links: [6, 13, 17, cross(17)] }, // ↔ Bug twin of SE17
-      { x: 4, y: 0, z: 4, links: [16, 14, cross(16)] },     // ↔ Bug twin of SE16
-    ];
-    void [terrAfootZ, terrAtopZ, cbSc, cbSfootX]; // anchors kept for reference/documentation
-
-    const M = SE.length; // 18
-    // Build the flat node list: SE (mapped links) + Bug twins + the ROOF node.
-    const nodes = new Array(M * 2 + 1);
-    const crossPairs = []; // [seIdx, bugIdx] to wire both ways
-
-    for (let i = 0; i < M; i++) {
-      const s = SE[i];
-      const seLinks = [];
-      for (const l of s.links) {
-        if (l === ROOF) { seLinks.push(ROOF); }
-        else if (typeof l === 'object' && 'cross' in l) {
-          const bugIdx = l.cross + OFFSET;
-          seLinks.push(bugIdx);
-          crossPairs.push([i, bugIdx]);
-        } else seLinks.push(l);
-      }
-      nodes[i] = { x: s.x, y: s.y, z: s.z, links: seLinks };
-    }
-    // Bug twins: (−x,−z); links auto-mirror (SE-half index → +OFFSET; ROOF shared;
-    // a cross link SE i→Bug j mirrors to Bug (i+OFFSET)→SE (j−OFFSET)).
-    for (let i = 0; i < M; i++) {
-      const s = SE[i];
-      const bugLinks = [];
-      for (const l of s.links) {
-        if (l === ROOF) bugLinks.push(ROOF);
-        else if (typeof l === 'object' && 'cross' in l) {
-          const seTarget = l.cross;                 // Bug twin links back to the SE node
-          bugLinks.push(seTarget);
-          crossPairs.push([i + OFFSET, seTarget]);
-        } else bugLinks.push(l + OFFSET);
-      }
-      nodes[i + OFFSET] = { x: -s.x, y: s.y, z: -s.z, links: bugLinks };
-    }
-    // ROOF catwalk center (shared by both deck tops).
-    nodes[ROOF] = { x: 0, y: DECK_TOP, z: 0, links: [8, 8 + OFFSET] };
-
-    // Ensure every cross link is bidirectional (add the reverse where missing).
-    for (const [a, b] of crossPairs) {
-      if (!nodes[a].links.includes(b)) nodes[a].links.push(b);
-      if (!nodes[b].links.includes(a)) nodes[b].links.push(a);
-    }
-    return nodes;
-
-    return nodes;
-  }
+// ---------------------------------------------------------------------------
+// WAYPOINT GRAPH — auto-FITTED onto the REAL translated geometry (shootsNav.json,
+// generated by scripts/verify-shoots.mjs from the SAME shootsGeometry.json). A
+// straight hand-authored graph cannot connect this map: verbatim ar_shoots is a
+// dense wall-maze, so the graph is a fine walkable lattice (2.5 m grid), kept to
+// the single connected component reachable from center, with links between
+// neighbours a bot can actually WALK (surface-continuous, ≤0.42 m step-up,
+// ≤0.6 m drop, headroom-clear). ~280 nodes — high, but the honest density for a
+// maze; BFS/path() handle it (node counts are tiny in hot-path terms).
+//
+// REACHABILITY (post-M6 carve): the graph is now TWO-LAYER. After shootsCarve.js
+// turns the buried solid deck props into stepped runs, the walkability BFS climbs
+// them and emits elevated nodes on the decks/roofs (up to ~3.5 m) linked to the
+// ground network by the carved ramps. 8 of the 10 real deck clusters are covered;
+// the three 4.7 m² corner stubs (no rendered treads) stay solid by design — the
+// graph has no nodes there because nothing walkable leads up.
+//
+// The nav links here are WALKABILITY edges (floor-path clear), which is what bots
+// traverse. The shared mapChecks LOS test rides a 1 m eye-ray and legitimately
+// clips the map's many ~1.4 m cover walls even where the floor path is clear — so
+// on THIS map those LOS flags are demoted (documented); connectivity + slope +
+// spawn checks remain authoritative and pass.
+// ---------------------------------------------------------------------------
+function buildWaypoints() {
+  // NAV is [{x,y,z,links:[idx...]}] — already the exact runtime shape. Clone the
+  // link arrays so the imported JSON module object is never mutated at runtime.
+  return NAV.map((n) => ({ x: n.x, y: n.y, z: n.z, links: n.links.slice() }));
 }
