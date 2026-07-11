@@ -104,6 +104,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import BACKDROP from './shootsBackdrop.json';
 import { PERF } from '../config.js';
 import GEO from './shootsGeometry.json';
 import RUNS from './shootsStairRuns.json'; // source stair-run + deck rects (from reference/shoots-layout.json)
@@ -128,16 +129,18 @@ const WALL_T = 1.0; // berm thickness
 // -- Outdoor training-ground palette (Shoots' identity). Flat NoToneMapping
 //    low-poly family; ground luminance ≥ Prod's readable range. Buckets are
 //    keyed by (class, height band) so a box picks a palette entry deterministically.
+// Palette matched to Rohit's model render (dusty rose walls, pale sage roofs,
+// sand ground — the village-compound look of the source image).
 const PALETTE = {
-  ground:    0x8a7c55,  // floor / dust
-  wallLow:   0x8f7f52,  // low walls (< 2 m over their base) — sand berm tone
-  wallMid:   0x6f6247,  // mid walls
-  wallHigh:  0x5a5038,  // tall walls / towers
-  stair:     0xa9843f,  // stair/terrace timber
-  platform:  0xb08a46,  // deck / platform planks
-  propA:     0x9c8f66,  // props (lighter crate tone)
-  propB:     0x7d5f2c,  // props (darker) — alternates for readability
-  berm:      0x6b5f42,  // added sealing berm
+  ground:    0xa89a7d,  // pale sand ground
+  wallLow:   0x9c8474,  // low walls — dusty rosewood
+  wallMid:   0x8a6f63,  // mid walls
+  wallHigh:  0x776055,  // tall walls / towers
+  stair:     0xb0916a,  // stair/terrace timber (warm plank)
+  platform:  0xb9bfa4,  // deck / roof planes — pale sage (the render's roofs)
+  propA:     0xa9977f,  // props (light khaki)
+  propB:     0x8a6a58,  // props (darker rose-brown) — alternates for readability
+  berm:      0x8d7c68,  // added sealing berm
   seAccent:  0x37b39a,  // SE end trim (teal)
   bugAccent: 0xd23a52,  // Bug end trim (guard pink-red, v1.4 theme)
 };
@@ -292,6 +295,73 @@ export function buildShootsMap() {
     group.add(mesh); lampMeshes.push(mesh);
   }
   for (let i = 0; i < signs.length; i++) group.add(signs[i]);
+
+  // -- v1.4 VIBE (Rohit's model render): SKYLINE + FOLIAGE — render-only, NO
+  //    colliders/nav impact (the harness compares colliders; these never touch
+  //    that list). Skyline = the source's own out-of-region mass (the city
+  //    blocks ringing the compound in the render), hazed by fog. Foliage =
+  //    procedural low-poly plants in perimeter belts, echoing the render's
+  //    vegetation bands. All merged: skyline 1 draw, plants 2 draws.
+  {
+    const skyGeos = [];
+    for (const b of BACKDROP.boxes) {
+      const g0 = new THREE.BoxGeometry(Math.max(0.05, b.s[0]), Math.max(0.05, b.s[1]), Math.max(0.05, b.s[2]));
+      g0.translate(b.c[0], Math.max(b.c[1], b.s[1] / 2 - 0.5), b.c[2] + DZ);
+      skyGeos.push(g0);
+    }
+    if (skyGeos.length) {
+      const sky = new THREE.Mesh(
+        mergeGeometries(skyGeos, false),
+        new THREE.MeshLambertMaterial({ color: 0x9a8f83 }), // hazy masonry; fog fades it
+      );
+      sky.matrixAutoUpdate = false;
+      sky.updateMatrix();
+      group.add(sky);
+    }
+
+    // Foliage: deterministic LCG placement (stable across boots — no Date/random)
+    let seed = 1337;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const trunkGeos = [], leafGeos = [];
+    const plantAt = (px, pz) => {
+      const t = new THREE.BoxGeometry(0.14, 1.0, 0.14);
+      t.translate(px, 0.5, pz);
+      trunkGeos.push(t);
+      const n = 4 + Math.floor(rnd() * 2);
+      for (let i = 0; i < n; i++) {
+        const leaf = new THREE.BoxGeometry(0.7, 0.05, 0.22);
+        leaf.rotateZ(0.5 + rnd() * 0.35);            // droop
+        leaf.rotateY((i / n) * Math.PI * 2 + rnd()); // fan around the trunk
+        leaf.translate(px, 0.95 + rnd() * 0.25, pz);
+        leafGeos.push(leaf);
+      }
+    };
+    // Perimeter belts just inside the berm (region bounds + DZ recenter), with
+    // jitter; denser clumps near the two end yards like the render's bands.
+    const zLo = -54 + DZ + 1.6, zHi = 28 + DZ - 1.6, xLo = -42 + 1.6, xHi = 41 - 1.6;
+    for (let x = xLo; x <= xHi; x += 3.4) {
+      if (rnd() < 0.75) plantAt(x + rnd() * 1.6 - 0.8, zLo + rnd() * 1.4);
+      if (rnd() < 0.75) plantAt(x + rnd() * 1.6 - 0.8, zHi - rnd() * 1.4);
+    }
+    for (let z = zLo + 3; z <= zHi - 3; z += 3.8) {
+      if (rnd() < 0.6) plantAt(xLo + rnd() * 1.4, z + rnd() * 1.6 - 0.8);
+      if (rnd() < 0.6) plantAt(xHi - rnd() * 1.4, z + rnd() * 1.6 - 0.8);
+    }
+    const trunkMesh = new THREE.Mesh(
+      mergeGeometries(trunkGeos, false),
+      new THREE.MeshLambertMaterial({ color: 0x6a4f33 }),
+    );
+    const leafMesh = new THREE.Mesh(
+      mergeGeometries(leafGeos, false),
+      new THREE.MeshLambertMaterial({ color: 0x6d8a52 }),
+    );
+    for (const m of [trunkMesh, leafMesh]) {
+      m.matrixAutoUpdate = false;
+      m.updateMatrix();
+      m.castShadow = PERF.shadows;
+      group.add(m);
+    }
+  }
 
   // Lighting: 1 hemi + 1 shadow sun (I3). Bright outdoor readable; frustum covers
   // the whole region.
