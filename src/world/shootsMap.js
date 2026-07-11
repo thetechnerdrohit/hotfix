@@ -131,16 +131,19 @@ const WALL_T = 1.0; // berm thickness
 //    keyed by (class, height band) so a box picks a palette entry deterministically.
 // Palette matched to Rohit's model render (dusty rose walls, pale sage roofs,
 // sand ground — the village-compound look of the source image).
+// v1.5 palette (Rohit): the pastel staircase-room look — bubblegum pink walls,
+// mint/lime platforms, yellow + teal pops, pale grey-green floor. Guards'
+// deep pink-red suits read against the lighter walls by value contrast.
 const PALETTE = {
-  ground:    0xa89a7d,  // pale sand ground
-  wallLow:   0x9c8474,  // low walls — dusty rosewood
-  wallMid:   0x8a6f63,  // mid walls
-  wallHigh:  0x776055,  // tall walls / towers
-  stair:     0xb0916a,  // stair/terrace timber (warm plank)
-  platform:  0xb9bfa4,  // deck / roof planes — pale sage (the render's roofs)
-  propA:     0xa9977f,  // props (light khaki)
-  propB:     0x8a6a58,  // props (darker rose-brown) — alternates for readability
-  berm:      0x8d7c68,  // added sealing berm
+  ground:    0xb9c2bb,  // pale grey-green floor (the stair-pit tone)
+  wallLow:   0xedadc6,  // low walls — bubblegum pink
+  wallMid:   0xe697b8,  // mid walls — pink
+  wallHigh:  0xd985aa,  // tall walls / towers — deeper pink
+  stair:     0xf0c3d5,  // stairs/terraces — pale pink
+  platform:  0xc4e3ad,  // decks / roofs — mint-lime
+  propA:     0xe9cf4f,  // props — yellow pop
+  propB:     0x8fd8cc,  // props — teal pop (alternates for readability)
+  berm:      0xc86f96,  // sealing berm — deep pink
   seAccent:  0x37b39a,  // SE end trim (teal)
   bugAccent: 0xd23a52,  // Bug end trim (guard pink-red, v1.4 theme)
 };
@@ -249,7 +252,7 @@ export function buildShootsMap() {
 
   const backdrop = new THREE.Mesh(
     new THREE.PlaneGeometry(200, 70),
-    new THREE.MeshBasicMaterial({ map: makeGradientTexture('#cbb98a', '#5f5236'), depthWrite: false, fog: false, toneMapped: false }),
+    new THREE.MeshBasicMaterial({ map: makeGradientTexture('#f2d4e0', '#b0718f'), depthWrite: false, fog: false, toneMapped: false }),
   );
   backdrop.position.set(0, 18, MAXZ + 14);
   backdrop.matrixAutoUpdate = false;
@@ -312,7 +315,7 @@ export function buildShootsMap() {
     if (skyGeos.length) {
       const sky = new THREE.Mesh(
         mergeGeometries(skyGeos, false),
-        new THREE.MeshLambertMaterial({ color: 0x9a8f83 }), // hazy masonry; fog fades it
+        new THREE.MeshLambertMaterial({ color: 0xdbb6c8 }), // pale pink haze skyline
       );
       sky.matrixAutoUpdate = false;
       sky.updateMatrix();
@@ -363,6 +366,53 @@ export function buildShootsMap() {
     }
   }
 
+  // -- v1.5 ROPES (interactable climb, player-only). Two point-symmetric ropes
+  //    hang over the big decks' outer faces — the ends AWAY from the carved
+  //    ramps, so the roofs gain a second approach for players while bots keep
+  //    their ramp routes (no bot-unanswerable change: same decks, new door).
+  //    Visual: a thin knotted line (merged, 1 draw). Data: map.ropes for the
+  //    controller. Non-colliding.
+  // Each rope: the hang line + an AUTHORED landing point on a VERIFIED plateau
+  // (collider-audited tops at 3.25). A+B serve the two corner-building caps —
+  // previously unreachable-by-design; the rope is now their door (player-only:
+  // a deliberate risk/reward perch — bots still shoot back in 3D). C+D give the
+  // central decks a second approach opposite their ramps.
+  const ropes = [
+    // One rope per big central deck, opposite its ramp — landings are
+    // HEADROOM-VERIFIED spots (983-cell audit: slab below, nothing above).
+    { x: -13.45, z: -10.8, yBottom: 0, yTop: 3.7, land: { x: -12.6, y: 3.3, z: -10.8 } }, // NW deck, west face
+    { x: 13.45, z: 10.8, yBottom: 0, yTop: 3.7, land: { x: 12.6, y: 3.3, z: 10.8 } },     // SE twin (point-symmetric)
+  ];
+  {
+    const ropeGeos = [];
+    for (const r of ropes) {
+      const line = new THREE.BoxGeometry(0.07, r.yTop - r.yBottom, 0.07);
+      line.translate(r.x, (r.yTop + r.yBottom) / 2, r.z);
+      ropeGeos.push(line);
+      for (let y = 0.5; y < r.yTop - 0.2; y += 0.75) {
+        const knot = new THREE.BoxGeometry(0.16, 0.1, 0.16);
+        knot.translate(r.x, y, r.z);
+        ropeGeos.push(knot);
+      }
+      // small anchor beam over the deck lip, oriented toward the landing point
+      const bdx = r.land.x - r.x, bdz = r.land.z - r.z;
+      const blen = Math.hypot(bdx, bdz) || 1;
+      const beam = new THREE.BoxGeometry(
+        Math.abs(bdx) > Math.abs(bdz) ? 1.0 : 0.14, 0.14,
+        Math.abs(bdx) > Math.abs(bdz) ? 0.14 : 1.0);
+      beam.translate(r.x + (bdx / blen) * 0.4, r.yTop + 0.05, r.z + (bdz / blen) * 0.4);
+      ropeGeos.push(beam);
+    }
+    const ropeMesh = new THREE.Mesh(
+      mergeGeometries(ropeGeos, false),
+      new THREE.MeshLambertMaterial({ color: 0xb8925a }), // hemp
+    );
+    ropeMesh.matrixAutoUpdate = false;
+    ropeMesh.updateMatrix();
+    ropeMesh.castShadow = PERF.shadows;
+    group.add(ropeMesh);
+  }
+
   // Lighting: 1 hemi + 1 shadow sun (I3). Bright outdoor readable; frustum covers
   // the whole region.
   const hemi = new THREE.HemisphereLight(0xfff2d6, 0x6a5f42, 2.1);
@@ -409,8 +459,8 @@ export function buildShootsMap() {
 
   const waypointNodes = buildWaypoints();
 
-  const background = new THREE.Color(0x8f7f56);
-  const fog = new THREE.Fog(0x8f7f56, 48, 180); // clears the long field sightlines
+  const background = new THREE.Color(0xe8c9d7); // pale pink sky (v1.5 pastel)
+  const fog = new THREE.Fog(0xe8c9d7, 48, 180); // pale pink haze; still clears the long field sightlines
 
   let _phase = 0;
   const _tealBase = new THREE.Color(LED_TEAL);
@@ -431,6 +481,7 @@ export function buildShootsMap() {
     seSpawns,
     bugSpawns,
     waypointNodes,
+    ropes, // v1.5 — climbable rope lines (controller consumes)
     background,
     fog,
     update,

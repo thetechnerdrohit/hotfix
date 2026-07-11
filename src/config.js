@@ -258,6 +258,17 @@ export const AUDIO = {
   botDeathGain: 0.6,         // peak gain scale of a bot death sound
 };
 
+// v1.5 — climbable ROPES (Rohit: interactable ways up). Player-only (bots use
+// their nav ramps; ropes are placed at decks bots already reach, so no
+// bot-unanswerable spots). Hold W while touching a rope to climb; S slides
+// down; jump releases with a push-off.
+export const ROPES = {
+  grabRadius: 0.55,   // XZ distance to the rope line that counts as touching
+  climbSpeed: 2.6,    // m/s up (W) / down (S)
+  releasePush: 2.2,   // horizontal push-off on jump-release
+  pullRate: 10,       // 1/s exp pull of the player onto the rope line while climbing
+};
+
 export const PERF = {
   dprCap: 2,     // I4
   shadows: true, // one static-baked directional shadow map (I3)

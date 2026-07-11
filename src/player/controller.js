@@ -24,7 +24,7 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { MOVE } from '../config.js';
+import { MOVE, ROPES } from '../config.js';
 
 const EPS = 1e-3; // collision skin (D3/D4)
 const KILL_FLOOR_Y = -20; // a collider-authoring mistake respawns instead of falling forever (D9)
@@ -42,6 +42,9 @@ export class PlayerController {
     this.sprinting = false;
     this.sprintSuppress = 0; // seconds sprint is force-disabled (E7 sprint-out); game-time
     this.speedScale = 1; // L-move: ADS move-speed multiplier (weapons sets it each frame; 1 = no-op)
+    this.ropes = null;    // v1.5: set by main from the map — [{x, z, yBottom, yTop}]
+    this.onRope = false;  // true while attached (HUD hint + weapon lower read this)
+    this.nearRope = false; // touching a rope but not climbing (HUD shows the hint)
     this.landImpact = 0; // m/s at touchdown this frame; camera dip consumes it (C9)
     this.stepRise = 0;   // K3: metres pos.y jumped UP via step-up/snap-up THIS frame; the camera pushes its eye offset down by this and decays it, so a step glides instead of popping. 0 on any frame with no step (flat ground). Never affects pos/collider.
   }
@@ -83,7 +86,52 @@ export class PlayerController {
     this.vel.z += (_wish.z * speed - this.vel.z) * k;
 
     // Gravity: semi-implicit Euler, terminal velocity cap (B5/C8)
-    this.vel.y = Math.max(this.vel.y - MOVE.gravity * dt, -MOVE.maxFallSpeed);
+    if (!this.onRope) this.vel.y = Math.max(this.vel.y - MOVE.gravity * dt, -MOVE.maxFallSpeed);
+
+    // -- v1.5 ROPE CLIMB (player-only interactable). Touching a rope + W climbs;
+    //    S slides down; jump releases with a push-off. Game-dt throughout.
+    this.nearRope = false;
+    let rope = null;
+    if (this.ropes) {
+      for (const r of this.ropes) {
+        const dx = this.pos.x - r.x, dz = this.pos.z - r.z;
+        if (dx * dx + dz * dz > ROPES.grabRadius * ROPES.grabRadius) continue;
+        if (this.pos.y < r.yBottom - 0.6 || this.pos.y > r.yTop) continue;
+        rope = r;
+        break;
+      }
+    }
+    this.nearRope = !!rope && !this.onRope;
+    const wantUp = input.pressed('KeyW');
+    const wantDown = input.pressed('KeyS');
+    if (rope && !this.onRope && (wantUp || wantDown) ) this.onRope = true;
+    if (this.onRope) {
+      if (!rope) {
+        this.onRope = false; // slid off the rope span
+      } else if (input.takeJump()) {
+        // jump-release: push away from the line, resume normal physics
+        this.onRope = false;
+        const dx = this.pos.x - rope.x, dz = this.pos.z - rope.z;
+        const len = Math.hypot(dx, dz) || 1;
+        this.vel.x = (dx / len) * ROPES.releasePush;
+        this.vel.z = (dz / len) * ROPES.releasePush;
+        this.vel.y = 2.5; // small hop so releasing at the top clears the lip
+      } else if (this.pos.y >= rope.yTop - 0.05 && wantUp) {
+        // TOP TRANSFER — DETERMINISTIC: each rope carries an AUTHORED landing
+        // point on verified plateau (physics hops proved unreliable: air
+        // control + narrow rims + probe-lied surfaces; see v1.5 post-mortem).
+        this.onRope = false;
+        this.pos.set(rope.land.x, rope.land.y + 0.05, rope.land.z);
+        this.vel.set(0, 0, 0);
+      } else {
+        // attached: vertical control, no gravity, pulled gently onto the line
+        this.vel.y = wantUp ? ROPES.climbSpeed : wantDown ? -ROPES.climbSpeed : 0;
+        const k = 1 - Math.exp(-ROPES.pullRate * dt);
+        this.vel.x = ((rope.x - this.pos.x) * 4 - this.vel.x) * k + this.vel.x;
+        this.vel.z = ((rope.z - this.pos.z) * 4 - this.vel.z) * k + this.vel.z;
+        if (this.pos.y <= rope.yBottom && !wantUp) this.onRope = false; // grounded out
+      }
+    }
 
     // K4: LAST frame's contact truth, captured before the jump block and the
     // per-frame grounded reset. Snap-down must key off this — on the FIRST

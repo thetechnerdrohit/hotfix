@@ -89,6 +89,12 @@ function applyFastPreset() {
 }
 
 const canvas = document.getElementById('game');
+// v1.5 rope hint element (created once; opacity-only updates — G2)
+const _ropeHintEl = document.createElement('div');
+_ropeHintEl.id = 'rope-hint';
+_ropeHintEl.textContent = 'hold W to climb';
+document.body.appendChild(_ropeHintEl);
+let _ropeHintShown = false;
 const settings = loadSettings();
 const menus = new Menus(settings);
 
@@ -168,6 +174,7 @@ function boot() {
   scene.add(cam.camera);
 
   const player = new PlayerController(room.spawnPoint);
+  player.ropes = room.ropes ?? null; // v1.5: climbable ropes (map-provided)
   const input = new Input();
   input.attach(canvas);
   const hud = new Hud();
@@ -722,6 +729,11 @@ function boot() {
     // HUD ticks on RAW dt (its markers must not freeze during hit-stop or pause);
     // crosshair bloom reads the live spread each frame (transform-only, G2/G8).
     hud.tick(rawDt, weapons.currentSpreadRad(), weapons.adsBlend);
+    // v1.5 rope hint (event-ish: writes only on state CHANGE)
+    if (player.nearRope !== _ropeHintShown) {
+      _ropeHintShown = player.nearRope;
+      _ropeHintEl.style.opacity = _ropeHintShown ? '1' : '0';
+    }
     // Map visual tick (v1.1): the blinking server-rack LED strips. Visual-only,
     // zero-alloc, no gameplay state — run it EVERY frame on raw dt so the arena
     // stays alive even behind the menus (charm; § brief). Guarded (test room /

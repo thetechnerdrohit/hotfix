@@ -572,3 +572,19 @@ button.ghost {
   cursor: pointer;
 }
 button.ghost:hover { background: #1a2130; }
+
+/* v1.5 rope-climb hint — center-low, opacity toggled on state change only */
+#rope-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 24%;
+  transform: translateX(-50%);
+  font: 13px ui-monospace, Menlo, monospace;
+  letter-spacing: 2px;
+  color: #ffd9e6;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+  z-index: 6;
+}
