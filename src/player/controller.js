@@ -8,6 +8,10 @@
 // Combat interplay: suppressSprint(s) forces sprint off for a game-time window
 // so a fire input drops sprint before the shot lands (E7); the weapon system
 // owns the timing, the controller just honors the suppression.
+// ADS interplay (v1.2, L-move): speedScale is a plain multiplier on the target
+// horizontal speed the weapon system sets each frame from the eased ADS blend
+// (1 = no ADS ⇒ true no-op). It ONLY scales the desired top speed — accel,
+// air-control, jump, gravity, sprint gating are all untouched.
 // ============================================================================
 
 import * as THREE from 'three';
@@ -28,6 +32,7 @@ export class PlayerController {
     this.jumpBuffer = 0; // seconds remaining (C4)
     this.sprinting = false;
     this.sprintSuppress = 0; // seconds sprint is force-disabled (E7 sprint-out); game-time
+    this.speedScale = 1; // L-move: ADS move-speed multiplier (weapons sets it each frame; 1 = no-op)
     this.landImpact = 0; // m/s at touchdown this frame; camera dip consumes it (C9)
   }
 
@@ -56,7 +61,10 @@ export class PlayerController {
     this.sprintSuppress = Math.max(0, this.sprintSuppress - dt);
     const wantSprint = input.pressed('ShiftLeft') || input.pressed('ShiftRight');
     this.sprinting = wantSprint && moving && f > 0 && this.sprintSuppress === 0;
-    const speed = MOVE.runSpeed * (this.sprinting ? MOVE.sprintMult : 1);
+    // L-move: ADS scales the TARGET top speed only (accel/air/jump untouched).
+    // sprinting is already false while aiming (L2 drops sprint), so this composes
+    // cleanly with the sprint gate above.
+    const speed = MOVE.runSpeed * (this.sprinting ? MOVE.sprintMult : 1) * this.speedScale;
 
     // Horizontal velocity: exponential approach → identical feel at any fps (B2)
     const accel = this.grounded ? MOVE.accelGround : MOVE.accelAir;

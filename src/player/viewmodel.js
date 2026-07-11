@@ -20,7 +20,7 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { VIEWMODEL, COMBAT, MOVE, CHARACTER } from '../config.js';
+import { VIEWMODEL, COMBAT, MOVE, CHARACTER, ADS } from '../config.js';
 
 const _muzzleWorld = new THREE.Vector3();
 
@@ -230,9 +230,23 @@ export class Viewmodel {
       rz += VIEWMODEL.knifeSwingRot * 0.5 * this.knifeSwing;
     }
 
-    // Sway/bob from movement — tiny.
-    px += Math.sin(this.bobPhase * 0.5) * VIEWMODEL.swayAmount * moveAmt;
-    py += Math.abs(Math.sin(this.bobPhase)) * VIEWMODEL.bobAmount * moveAmt;
+    // ADS pose (register group L): ease toward a centered, sights-up pose scaled
+    // by the eased blend read straight off the weapon system (no event — L: "blend
+    // eases with the same adsBlend"). Sway/bob are DAMPED ×swayDamp toward a steady
+    // sight picture as the blend rises. Knife has no pose entry ⇒ untouched (L8).
+    // At blend 0 pose add is 0 and swayScale is 1 — a true no-op path.
+    const blend = weapons.adsBlend ?? 0;
+    const pose = ADS.viewmodelPose[this.active];
+    if (pose && blend > 0) {
+      px += pose.x * blend;
+      py += pose.y * blend;
+      pz += pose.z * blend; // +z = toward the camera (rig sits at posZ = −0.42)
+    }
+    const swayScale = 1 - (1 - ADS.swayDamp) * blend;
+
+    // Sway/bob from movement — tiny (damped while aiming).
+    px += Math.sin(this.bobPhase * 0.5) * VIEWMODEL.swayAmount * moveAmt * swayScale;
+    py += Math.abs(Math.sin(this.bobPhase)) * VIEWMODEL.bobAmount * moveAmt * swayScale;
 
     // --- Ease the applied offsets toward the target (exp smoothing) ---------
     const k = 1 - Math.exp(-VIEWMODEL.followRate * dt);

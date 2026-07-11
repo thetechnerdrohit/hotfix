@@ -5,7 +5,7 @@
 // drop both the panel and the dependency.
 // ============================================================================
 
-import { MOVE, FEEL, COMBAT, VIEWMODEL, CROSSHAIR, CHARACTER } from '../config.js';
+import { MOVE, FEEL, COMBAT, VIEWMODEL, CROSSHAIR, CHARACTER, ADS } from '../config.js';
 
 export async function initTuner() {
   if (!import.meta.env.DEV) return;
@@ -79,6 +79,26 @@ export async function initTuner() {
   ch.add(CHARACTER, 'bugLegSkitterDeg', 0, 60, 1).name('bug leg skitter°');
   ch.add(CHARACTER, 'bugSkitterHzMult', 1, 3, 0.1).name('bug skitter ×Hz');
   ch.add(CHARACTER, 'bugAntennaSwayDeg', 0, 40, 1).name('antenna sway°');
+
+  // ADS (v1.2, register group L) — hold-RMB aim-down-sights feel. All read live:
+  // the eased blend is recomputed each frame off these, and the FOV/sensitivity/
+  // spread/pose/crosshair all lerp by that blend, so a slider tweak is felt on the
+  // next aim. Per-weapon zoom is edited under its sub-objects. (blendIn/Out are the
+  // ease rates; minFovDeg is the L6 clamp floor.)
+  const ad = gui.addFolder('ADS (v1.2 — hold RMB)');
+  ad.add(ADS, 'zoomDeg', 0, 40, 1).name('zoom° (default)');
+  ad.add(ADS.perWeaponZoomDeg, 'rifle', 0, 40, 1).name('rifle zoom°');
+  ad.add(ADS.perWeaponZoomDeg, 'pistol', 0, 40, 1).name('pistol zoom°');
+  ad.add(ADS, 'sensMult', 0.2, 1, 0.05).name('sensitivity ×');
+  ad.add(ADS, 'moveMult', 0.3, 1, 0.05).name('move speed ×');
+  ad.add(ADS, 'recoilMult', 0.3, 1, 0.05).name('recoil ×');
+  ad.add(ADS.spreadMult, 'rifle', 0.1, 1, 0.05).name('rifle spread ×');
+  ad.add(ADS.spreadMult, 'pistol', 0.1, 1, 0.05).name('pistol spread ×');
+  ad.add(ADS, 'blendIn', 6, 30, 1).name('blend-in (1/s)');
+  ad.add(ADS, 'blendOut', 6, 30, 1).name('blend-out (1/s)');
+  ad.add(ADS, 'minFovDeg', 30, 60, 1).name('min FOV° (L6)');
+  ad.add(ADS, 'crosshairAlpha', 0, 1, 0.05).name('crosshair fade');
+  ad.add(ADS, 'swayDamp', 0, 1, 0.05).name('sway damp');
 
   gui.close(); // present but folded — one click away while feel-testing
 }

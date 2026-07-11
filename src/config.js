@@ -73,6 +73,60 @@ export const COMBAT = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// ADS — aim-down-sights (v1.2, register group L). HOLD right mouse = ADS while
+// held. It is a WEAPON-SYSTEM state (weapons owns `adsActive` + an eased 0→1
+// `adsBlend` on game dt); every presentation/gameplay layer READS that blend so
+// pause/hit-stop behave for free (the blend only advances while the weapon
+// ticks, i.e. while PLAYING — L1/L5). blend 0 must be a TRUE no-op path so
+// Phase-1..v1.1 behaviour is untouched when RMB isn't held.
+//
+// Effects (all scaled by the eased blend unless noted):
+//   • zoom: base FOV (incl. the FOV slider + sprint-kick logic) MINUS zoomDeg,
+//     lerped by blend; ADS wins over the sprint kick; result clamped ≥ minFovDeg
+//     (L6 — never below ~40°). Per-weapon zoomDeg override (rifle 18, pistol 12).
+//   • sensitivity ×sensMult (L7): scaled CONTINUOUSLY by blend (lerp 1→sensMult)
+//     so the slowdown tracks the zoom in — no threshold pop. Applied in
+//     camera.applyMouse. Documented choice: proportional-to-blend, not a step.
+//   • spread ×spreadMult (rifle 0.45, pistol 0.6): folded into currentSpreadRad()
+//     as a blend-lerped factor; still MULTIPLIES the move-spread penalty (L9 —
+//     ADS tightens, movement re-widens, both apply).
+//   • move speed ×moveMult via controller.speedScale (a suppressSprint-style hook,
+//     blend-lerped 1→moveMult).
+//   • recoil ×recoilMult: the emitted recoilDeg is scaled by the blend-lerped
+//     factor (both camera kick and viewmodel kick read the reduced value).
+//   • crosshair (L10): lines tighten toward the dot + fade to crosshairAlpha as
+//     blend rises (transform/opacity only, G2); hitmarkers unaffected.
+//   • knife (L8): NO ADS — RMB ignored, blend forced toward 0.
+// blendIn/blendOut are exp-approach rates (1/s), frame-rate independent (B2).
+// ---------------------------------------------------------------------------
+export const ADS = {
+  zoomDeg: 18,          // default vertical-FOV reduction when fully aimed (per-weapon override below)
+  sensMult: 0.65,       // L7: look sensitivity multiplier at full ADS (lerped by blend)
+  moveMult: 0.70,       // L-move: horizontal move-speed multiplier at full ADS
+  recoilMult: 0.85,     // recoil kick multiplier at full ADS
+  spreadMult: { rifle: 0.45, pistol: 0.60 }, // spread-cone multiplier at full ADS (per weapon)
+  perWeaponZoomDeg: { rifle: 18, pistol: 12 }, // per-weapon zoom override (falls back to zoomDeg)
+  minFovDeg: 40,        // L6: hard floor on the resulting FOV so a low FOV slider + zoom can't over-crop
+  blendIn: 16,          // 1/s exp-approach rate blending INTO ads (fast, snappy)
+  blendOut: 20,         // 1/s exp-approach rate blending back OUT (a touch faster)
+  crosshairAlpha: 0.25, // L10: crosshair opacity at full ADS (lines fade, dot stays)
+  crosshairTighten: 0.85, // L10: fraction the crosshair gap is pulled toward the dot at full ADS
+  tickGain: 0.35,       // ADS in/out audio tick gain (soft, on the ui bus)
+
+  // -- Viewmodel ADS pose (per weapon). At full blend the rig eases from its rest
+  //    offset (VIEWMODEL.posX/Y/Z) toward THIS centered pose: pulled under the
+  //    crosshair (x→~0), a touch down to line up the sights (y), and slightly
+  //    toward the camera (z, +ve = closer to the eye). Blended by adsBlend so it
+  //    shares the same ease as FOV/sens. Sway/bob are damped ×swayDamp while aimed.
+  //    Knife has no entry (no ADS, L8). Values are camera-local metres.
+  viewmodelPose: {
+    rifle:  { x: -0.20, y: 0.10, z: 0.06 }, // cancels rest posX (0.20) → centered; barrel up to eye
+    pistol: { x: -0.20, y: 0.11, z: 0.05 },
+  },
+  swayDamp: 0.3,        // sway/bob amplitude multiplier at full ADS (steady sight picture)
+};
+
 export const MOVE = {
   runSpeed: 5.0,
   sprintMult: 1.4,

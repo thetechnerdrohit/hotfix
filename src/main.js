@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import './style.css';
-import { MOVE, PERF, FEEL, BOTS } from './config.js';
+import { MOVE, PERF, FEEL, BOTS, ADS } from './config.js';
 import { Input } from './core/input.js';
 import { loadSettings, saveSettings } from './core/settings.js';
 import { PlayerController } from './player/controller.js';
@@ -361,6 +361,13 @@ function boot() {
     hitStopTimer = FEEL.hitStopMs / 1000; // arm the freeze (ticked on raw dt below)
   };
 
+  // ADS (register group L): a soft in/out tick on the ui bus (edge-driven). The
+  // eased FOV/sensitivity/pose/crosshair all read weapons.adsBlend per frame
+  // below — this callback is ONLY the audio cue.
+  weapons.onAdsChanged = (active) => {
+    audio.adsTick(ADS.tickGain, active);
+  };
+
   // ==========================================================================
   // PHASE 3 MATCH EVENT WIRING (event → presentation). Every field is nullable
   // and assigned here (the backend leaves them unassigned). Guarded by `if
@@ -633,6 +640,11 @@ function boot() {
     }
 
     if (state === 'playing') {
+      // ADS (register group L): push the weapon system's eased blend + the active
+      // weapon's per-weapon zoom into the camera BEFORE applyMouse (sensitivity,
+      // L7) and follow (FOV, L6). weapons.update ran last frame, so adsBlend is
+      // this-frame-fresh enough for an eased value; blend 0 is a true no-op.
+      cam.setAds(weapons.adsBlend, ADS.perWeaponZoomDeg[weapons.active] ?? ADS.zoomDeg);
       cam.applyMouse(input.dx, input.dy);
       input.resetMouseDelta();
 
@@ -644,6 +656,10 @@ function boot() {
       // static room colliders + living-bot AABBs). Practice mode uses the room.
       const cols = match ? match.dynamicColliders : room.colliders;
 
+      // While dead the weapon system doesn't tick, so its ADS move-speed hook
+      // would freeze — force the controller back to full speed so a respawn never
+      // inherits a stale ADS slowdown (L: ADS is a held state, cleared on respawn).
+      if (!alive) player.speedScale = 1;
       if (alive) player.update(simDt, input, cam.yaw, cols);
       // Weapons tick AFTER the controller so sprint-out suppression (E7) reads
       // this frame's sprint state; the ray is cast against the just-moved camera.
@@ -699,7 +715,7 @@ function boot() {
 
     // HUD ticks on RAW dt (its markers must not freeze during hit-stop or pause);
     // crosshair bloom reads the live spread each frame (transform-only, G2/G8).
-    hud.tick(rawDt, weapons.currentSpreadRad());
+    hud.tick(rawDt, weapons.currentSpreadRad(), weapons.adsBlend);
     // Map visual tick (v1.1): the blinking server-rack LED strips. Visual-only,
     // zero-alloc, no gameplay state — run it EVERY frame on raw dt so the arena
     // stays alive even behind the menus (charm; § brief). Guarded (test room /

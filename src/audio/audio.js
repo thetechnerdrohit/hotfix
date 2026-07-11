@@ -402,6 +402,16 @@ export class AudioEngine {
     this._tone(this.ui, { wave: 'square', freq: 380, toFreq: 240, peak: 0.14, attack: 0.001, decay: 0.035 });
   }
 
+  // ADS in/out (register group L): a tiny soft foley tick on the ui bus — a
+  // quieter, higher cousin of switchClick so raising/lowering the sights reads by
+  // ear without competing with combat. `gain` scales the peak (ADS.tickGain);
+  // `up` shifts the pitch slightly for the in vs out direction.
+  adsTick(gain = 0.35, up = true) {
+    if (!this.ready) return;
+    const f = up ? 620 : 480;
+    this._tone(this.ui, { wave: 'square', freq: f, toFreq: f * 0.7, peak: 0.12 * gain, attack: 0.001, decay: 0.028 });
+  }
+
   // OUTGOING hit confirm — crisp HIGH tick (H4). The most-played combat sound;
   // kept very short so a spray of them stays clean.
   hitTick() {

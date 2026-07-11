@@ -37,12 +37,29 @@
 // at the bottom of this file.
 // ============================================================================
 
+// ADS (v1.2, register group L) is owned HERE so it's a weapon-system state:
+//   L1  hold RMB (button 2) = ADS, only while PLAYING+ticking (update runs only
+//        then) — the eased blend advances on game dt so pause/hit-stop behave.
+//   L2  ADS and sprint are exclusive: entering ADS drops sprint (suppressSprint)
+//        and, because ADS forces sprinting=false via that window, sprint intent
+//        never breaks ADS.
+//   L3  reload keeps ADS state (adsActive/blend untouched) but fire stays blocked
+//        by the existing 'ready' gate; the reload viewmodel wins.
+//   L4  weapon switch DROPS ADS (_beginSwitch clears it — must re-hold).
+//   L5  pause/lock-loss clears input.buttons via clearAll, so `held` reads false
+//        next tick and the blend eases OUT; no re-enter without a re-hold.
+//   L8  knife has NO ADS: RMB ignored, adsActive forced false, blend eases to 0.
+//   L9  ADS spread multiplier still MULTIPLIES the move-spread penalty (both fold
+//        into currentSpreadRad()).
+// The recoil multiplier + move-speed hook + FOV/sensitivity/crosshair are read
+// by the presentation layers straight off adsBlend each frame (no events).
 import * as THREE from 'three';
-import { COMBAT, MOVE } from '../config.js';
+import { COMBAT, MOVE, ADS } from '../config.js';
 import { castRay, castKnife, makeHitResult } from './hitscan.js';
 import { applyDamage, falloffMult } from './damage.js';
 
 const LMB = 0;
+const RMB = 2; // L1: right mouse button (input.buttons uses the raw event.button)
 const KEY_FOR = { rifle: 'Digit1', pistol: 'Digit2', knife: 'Digit3' };
 const NAMES = ['rifle', 'pistol', 'knife'];
 const INFINITE = Infinity; // knife reserve sentinel (R9)
@@ -109,6 +126,17 @@ export class WeaponSystem {
     // widens while you move, and the shot + the display read the SAME factor.
     this._moveSpreadFactor = 1;
 
+    // ADS state (register group L). adsActive = "RMB held AND allowed this frame"
+    // (knife → always false, L8). adsBlend eases 0→1 toward adsActive on game dt
+    // (B2) so every read is a true no-op at 0. Presentation layers read adsBlend
+    // each frame (camera FOV/sens, viewmodel pose, HUD crosshair) — no events.
+    this.adsActive = false;
+    this.adsBlend = 0;
+    // L4: after a switch drops ADS while RMB is still down, require a RELEASE
+    // before ADS can re-arm (else _tickAds would just re-enter next frame on the
+    // still-held button). Cleared the moment RMB is seen up.
+    this._adsRearmBlocked = false;
+
     // Switch-during-switch (R4) needs no separate queue: a newer press just
     // calls _beginSwitch again the same frame, re-pointing active + restarting
     // the raise on the newest weapon. There is no partial/committed ammo to
@@ -125,6 +153,7 @@ export class WeaponSystem {
     this.onSwitchEnd = null;     // (name)
     this.onAmmoChanged = null;   // (weapon)
     this.onKill = null;          // (target, { isHead, weapon })
+    this.onAdsChanged = null;     // (active: bool) — edge only (L: soft in/out tick, ui bus)
   }
 
   // ---- Introspection the frontend / viewmodel needs ------------------------
@@ -142,7 +171,25 @@ export class WeaponSystem {
   // and the HUD crosshair read this, so a moving player SEES the wider cone.
   currentSpreadRad() {
     const base = this.spec.spreadBase ?? 0;
-    return THREE.MathUtils.degToRad((base + this.bloom) * this._moveSpreadFactor);
+    return THREE.MathUtils.degToRad((base + this.bloom) * this._moveSpreadFactor * this._adsSpreadFactor());
+  }
+
+  // L9: the ADS spread multiplier, lerped 1→spreadMult by the eased blend. It
+  // MULTIPLIES the move-spread penalty (both cones stack): ADS tightens, movement
+  // re-widens. Knife has no entry ⇒ factor 1 (and knife blend is forced 0 anyway).
+  // At blend 0 this is exactly 1 — a true no-op (the HUD + shot both read it).
+  _adsSpreadFactor() {
+    if (this.adsBlend <= 0) return 1;
+    const mult = ADS.spreadMult[this.active];
+    if (mult == null) return 1;
+    return 1 + (mult - 1) * this.adsBlend;
+  }
+
+  // The eased recoil multiplier the presentation reads to scale onFire's kick
+  // (camera + viewmodel). Lerped 1→recoilMult by the blend; 1 at blend 0 (no-op).
+  adsRecoilMult() {
+    if (this.adsBlend <= 0) return 1;
+    return 1 + (ADS.recoilMult - 1) * this.adsBlend;
   }
 
   // ---- Main tick. main.js gates this to the PLAYING state. -----------------
@@ -172,6 +219,10 @@ export class WeaponSystem {
       if (this.semiBufferTimer <= 0) { this.semiBuffered = false; this.semiBufferTimer = 0; }
     }
 
+    // 0) ADS (register group L) — resolved BEFORE firing so the sprint drop (L2)
+    //    lands this frame and the eased blend the fire path reads is current.
+    this._tickAds(dt, input, controller);
+
     // 1) Weapon-switch input (edge). A press retargets even mid-switch (R4).
     this._readSwitchInput(input);
 
@@ -184,6 +235,43 @@ export class WeaponSystem {
 
     // 4) Firing — sprint-out gating, cooldown, buffers, the shot itself.
     this._tickFire(dt, input, controller);
+  }
+
+  // -------------------------------------------------------------------------
+  // ADS (register group L)
+  // -------------------------------------------------------------------------
+  _tickAds(dt, input, controller) {
+    // L1/L8: aim iff RMB is held AND the active weapon can ADS (knife can't).
+    // input.buttons is cleared by clearAll on pause/lock-loss (A14/E4), so a
+    // paused-then-resumed player reads held=false until they re-press (L5).
+    const rmbDown = input.buttons.has(RMB);
+    // L4: a switch that dropped ADS blocks re-arm until RMB is released once.
+    if (!rmbDown) this._adsRearmBlocked = false;
+    const held = rmbDown && this.active !== 'knife' && !this._adsRearmBlocked;
+
+    // Edge → the soft in/out tick (presentation owns the sound; ui bus).
+    if (held !== this.adsActive) {
+      this.adsActive = held;
+      if (this.onAdsChanged) this.onAdsChanged(held);
+    }
+
+    // Ease the blend toward 0/1 on game dt (B2) — frame-rate independent, and it
+    // only advances while update() runs (PLAYING), so pause freezes it (L1/L5).
+    const rate = held ? ADS.blendIn : ADS.blendOut;
+    const k = 1 - Math.exp(-rate * dt);
+    this.adsBlend += ((held ? 1 : 0) - this.adsBlend) * k;
+    if (this.adsBlend < 1e-3) this.adsBlend = 0;   // snap to a TRUE no-op at rest
+    if (this.adsBlend > 0.999) this.adsBlend = 1;
+
+    // L2: while actually aiming, force sprint out every frame — entering ADS drops
+    // sprint and sprint intent can't break ADS (the controller stays suppressed as
+    // long as we hold). L-move: scale the move-speed target by the eased blend
+    // (1→moveMult). Both are plain hooks on the controller; blend 0 ⇒ scale 1
+    // (no-op) and no suppression, so non-ADS movement is byte-identical.
+    if (controller) {
+      if (this.adsActive) controller.suppressSprint(COMBAT.sprintOutTime);
+      controller.speedScale = 1 + (ADS.moveMult - 1) * this.adsBlend;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -208,6 +296,15 @@ export class WeaponSystem {
     // Switching cancels an in-progress reload; the mag is left exactly as it
     // was (E11/R4) — atomic-at-completion means no partial ammo ever existed.
     if (this.state === 'reloading') this._endReload(false);
+
+    // L4: a switch DROPS ADS — the player must re-hold RMB on the new weapon. Only
+    // the active latch is cleared here; the blend eases back out in _tickAds (so
+    // the FOV/pose don't pop). Fire the edge so the out-tick plays if we were aiming.
+    if (this.adsActive) {
+      this.adsActive = false;
+      this._adsRearmBlocked = true; // require a RMB release before re-arming (L4)
+      if (this.onAdsChanged) this.onAdsChanged(false);
+    }
 
     this.active = name;
     this.state = 'raising';
@@ -393,7 +490,7 @@ export class WeaponSystem {
     } else {
       // Defensive: no ray source wired (headless bring-up). Emit onFire so
       // ammo/feedback still flow, but resolve nothing.
-      if (this.onFire) this.onFire({ weapon: this.active, spreadRad, recoilDeg: spec.recoilPerShot ?? 0 });
+      if (this.onFire) this.onFire({ weapon: this.active, spreadRad, recoilDeg: (spec.recoilPerShot ?? 0) * this.adsRecoilMult() });
       return;
     }
 
@@ -401,7 +498,7 @@ export class WeaponSystem {
     // the camera. Bloom grows AFTER this shot so the shot just fired used the
     // pre-bloom cone (first-shot-exact holds).
     if (this.onFire) {
-      this.onFire({ weapon: this.active, spreadRad, recoilDeg: spec.recoilPerShot ?? 0 });
+      this.onFire({ weapon: this.active, spreadRad, recoilDeg: (spec.recoilPerShot ?? 0) * this.adsRecoilMult() });
     }
     if (!isKnife) {
       this.bloom = Math.min((COMBAT.maxBloom ?? 1.4), this.bloom + (spec.bloomPerShot ?? 0));
@@ -485,6 +582,12 @@ export class WeaponSystem {
     this.ammo.knife = { mag: INFINITE, reserve: INFINITE };
     this.bloom = 0;
     this._cancelBufferedFire();
+    // ADS is a held state, not a persistent one — a respawn shouldn't carry it.
+    // Clear the latch + blend; the presentation eases from 0, and RMB must be
+    // re-held (L4-style) since clearAll on the death/respawn boundary drops it.
+    this.adsActive = false;
+    this.adsBlend = 0;
+    this._adsRearmBlocked = false;
     if (this.onAmmoChanged) this.onAmmoChanged(this.active);
   }
 }
@@ -503,4 +606,7 @@ export class WeaponSystem {
 //   onSwitchEnd    (name)
 //   onAmmoChanged  (weapon)
 //   onKill         (target, { isHead, weapon })
+//   onAdsChanged   (active)   // L: RMB-held edge — soft in/out tick (ui bus)
+// Presentation also reads, per frame (no events): weapons.adsBlend (0→1 eased),
+// weapons.adsActive, weapons.adsRecoilMult() — for FOV/sensitivity/pose/crosshair.
 // ============================================================================

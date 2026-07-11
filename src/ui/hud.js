@@ -15,7 +15,7 @@
 // tick() so pausing the sim doesn't strand a half-faded marker on screen.
 // ============================================================================
 
-import { CROSSHAIR, FEEL, COMBAT } from '../config.js';
+import { CROSSHAIR, FEEL, COMBAT, ADS } from '../config.js';
 
 export class Hud {
   constructor() {
@@ -54,6 +54,8 @@ export class Hud {
     this._lowActive = false;
     // Cached crosshair gap so we skip re-writing 4 transforms when it's unchanged.
     this._lastGap = -1;
+    // Cached ADS crosshair opacity (L10) so we only write it on change.
+    this._lastChAlpha = -1;
   }
 
   // ---- Event-driven writes (called from main on weapon events; NOT per frame) --
@@ -104,9 +106,9 @@ export class Hud {
 
   // spreadRad: weapons.currentSpreadRad() — expands the crosshair gap (G8).
   // rawDt drives all HUD timers so a pause doesn't leave a marker stuck.
-  tick(rawDt, spreadRad = 0) {
+  tick(rawDt, spreadRad = 0, adsBlend = 0) {
     this._tickFps(rawDt);
-    this._tickCrosshair(spreadRad);
+    this._tickCrosshair(spreadRad, adsBlend);
     this._tickHitmarker(rawDt);
     this._tickAmmoFlash(rawDt);
   }
@@ -122,13 +124,29 @@ export class Hud {
     }
   }
 
-  _tickCrosshair(spreadRad) {
+  _tickCrosshair(spreadRad, adsBlend = 0) {
+    // L10: as the ADS blend rises, the lines FADE toward crosshairAlpha (opacity
+    // only, G2) — the dot stays. Hitmarkers are a separate element, unaffected.
+    // Written only on change (cached) so a steady blend costs nothing.
+    const alpha = 1 - (1 - ADS.crosshairAlpha) * adsBlend;
+    const a = Math.round(alpha * 100) / 100;
+    if (a !== this._lastChAlpha) {
+      this._lastChAlpha = a;
+      const s = String(a);
+      this.chLines.up.style.opacity = s;
+      this.chLines.down.style.opacity = s;
+      this.chLines.left.style.opacity = s;
+      this.chLines.right.style.opacity = s;
+    }
+
     // Gap in px from the resting gap plus the spread expansion, hard-capped so
-    // the crosshair can never bloom into a blob (G8).
+    // the crosshair can never bloom into a blob (G8). L10: the whole gap is then
+    // pulled toward the dot by crosshairTighten × blend (a tight, precise reticle
+    // while aimed). At blend 0 the tighten factor is 1 ⇒ unchanged.
     const gap = Math.min(
       CROSSHAIR.maxGapPx,
       CROSSHAIR.baseGapPx + spreadRad * CROSSHAIR.pxPerRad,
-    );
+    ) * (1 - ADS.crosshairTighten * adsBlend);
     // Skip the 4 transform writes when the gap is visually unchanged (rounded to
     // the px) — most frames the spread is steady (or exactly base for the knife).
     const g = Math.round(gap * 2) / 2; // half-px granularity

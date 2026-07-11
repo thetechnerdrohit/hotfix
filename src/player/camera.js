@@ -31,7 +31,7 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { MOVE, FEEL, INPUT, COMBAT } from '../config.js';
+import { MOVE, FEEL, INPUT, COMBAT, ADS } from '../config.js';
 
 const PITCH_LIMIT = THREE.MathUtils.degToRad(INPUT.pitchLimitDeg);
 
@@ -71,10 +71,32 @@ export class FpsCamera {
     // RENDERED transform only (like shake/recoil). Never touches aim/collider.
     this.deathTilt = 0;
     this.deathTiltTarget = 0;
+
+    // ADS (register group L) — main.js sets these each PLAYING frame from the
+    // weapon system BEFORE applyMouse/follow run: adsBlend is the eased 0→1
+    // aim amount; adsZoomDeg is the active weapon's FOV reduction. Both default
+    // to a true no-op (blend 0), so a non-aiming frame behaves exactly as before.
+    this.adsBlend = 0;
+    this.adsZoomDeg = ADS.zoomDeg;
+  }
+
+  // main.js pushes the weapon system's eased ADS state here once per PLAYING
+  // frame, before applyMouse + follow (L6/L7). Kept as a tiny setter so the
+  // camera stays the one place FOV + sensitivity compose.
+  setAds(blend, zoomDeg) {
+    this.adsBlend = blend;
+    this.adsZoomDeg = zoomDeg;
   }
 
   applyMouse(dx, dy) {
-    const s = INPUT.radPerCount * this.sensitivity;
+    // L7: sensitivity scales CONTINUOUSLY with the ADS blend (lerp 1→sensMult),
+    // so the slowdown tracks the zoom in with no threshold pop. Chosen over a
+    // blend>0.5 step because a proportional slow reads as "the more I'm zoomed,
+    // the finer my aim" — and it can't jump mid-blend. (A true zoom-proportional
+    // sens would divide by the FOV ratio; a flat multiplier is the CS/Valorant
+    // convention players expect, and it's what the tuner exposes.)
+    const sensMult = 1 + (ADS.sensMult - 1) * this.adsBlend;
+    const s = INPUT.radPerCount * this.sensitivity * sensMult;
     this.yaw -= dx * s;
     this.pitch = THREE.MathUtils.clamp(this.pitch - dy * s, -PITCH_LIMIT, PITCH_LIMIT);
   }
@@ -117,9 +139,18 @@ export class FpsCamera {
     this.dipVel += (-FEEL.dipStiffness * this.dip - FEEL.dipDamping * this.dipVel) * dt;
     this.dip = Math.max(this.dip + this.dipVel * dt, -0.3);
 
-    // Sprint FOV kick (C11) — subtle, smoothed, config-driven
-    const fovTarget = this.fovBase + (player.sprinting ? FEEL.fovSprintAdd : 0);
-    this.fovCurrent += (fovTarget - this.fovCurrent) * (1 - Math.exp(-10 * dt));
+    // FOV target = sprint kick (C11) composed with the ADS zoom (L6). ADS WINS
+    // over the sprint kick: the sprint add is faded out by the blend, then the
+    // zoom is subtracted, so a full aim is base − zoom with no sprint widening.
+    // Clamp to ADS.minFovDeg so a low FOV slider + zoom can't over-crop the view
+    // (never below ~40°). At blend 0 this reduces to the exact pre-ADS target.
+    const sprintAdd = (player.sprinting ? FEEL.fovSprintAdd : 0) * (1 - this.adsBlend);
+    const zoom = this.adsZoomDeg * this.adsBlend;
+    const fovTarget = Math.max(ADS.minFovDeg, this.fovBase + sprintAdd - zoom);
+    // Snappier easing while blended so the zoom keeps up with the fast adsBlend
+    // (they read the same feel); the sprint kick alone stays at its gentle rate.
+    const fovRate = 10 + 8 * this.adsBlend;
+    this.fovCurrent += (fovTarget - this.fovCurrent) * (1 - Math.exp(-fovRate * dt));
     if (Math.abs(this.camera.fov - this.fovCurrent) > 0.01) {
       this.camera.fov = this.fovCurrent;
       this.camera.updateProjectionMatrix();
