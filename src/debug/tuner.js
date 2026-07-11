@@ -5,7 +5,7 @@
 // drop both the panel and the dependency.
 // ============================================================================
 
-import { MOVE, FEEL, COMBAT, VIEWMODEL, CROSSHAIR } from '../config.js';
+import { MOVE, FEEL, COMBAT, VIEWMODEL, CROSSHAIR, CHARACTER } from '../config.js';
 
 export async function initTuner() {
   if (!import.meta.env.DEV) return;
@@ -66,6 +66,19 @@ export async function initTuner() {
   v.add(VIEWMODEL, 'recoilRecover', 4, 30, 1);
   v.add(VIEWMODEL, 'followRate', 6, 40, 1);
   v.add(CROSSHAIR, 'pxPerRad', 200, 2000, 50).name('crosshair px/rad');
+
+  // v1.1 CHARACTER — procedural figure/limb animation (transform-only). Values
+  // apply live on the next animated frame (bots read CHARACTER fresh each tick).
+  // Hand tones (handColor) are read at build time, so those don't hot-update.
+  const ch = gui.addFolder('CHARACTER (v1.1 looks)');
+  ch.add(CHARACTER, 'animSmooth', 4, 30, 1).name('limb ease (1/s)');
+  ch.add(CHARACTER, 'strideHz', 0.5, 5, 0.1).name('stride Hz');
+  ch.add(CHARACTER, 'bobAmpBody', 0, 0.12, 0.005).name('body bob (m)');
+  ch.add(CHARACTER, 'seLegSwingDeg', 0, 60, 1).name('SE leg swing°');
+  ch.add(CHARACTER, 'seArmSwingDeg', 0, 30, 1).name('SE arm swing°');
+  ch.add(CHARACTER, 'bugLegSkitterDeg', 0, 60, 1).name('bug leg skitter°');
+  ch.add(CHARACTER, 'bugSkitterHzMult', 1, 3, 0.1).name('bug skitter ×Hz');
+  ch.add(CHARACTER, 'bugAntennaSwayDeg', 0, 40, 1).name('antenna sway°');
 
   gui.close(); // present but folded — one click away while feel-testing
 }

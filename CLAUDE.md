@@ -60,7 +60,9 @@ Damage falloff + spread-at-range are **Phase 4** (need the real map). Flat hitsc
 `WASD` move · `Shift` sprint · `Space` jump · `Mouse` look · `LMB` fire · `R` reload · `1` rifle · `2` pistol · `3` knife
 
 ## Out of scope — do NOT build yet
-Open world / large streaming map · asymmetric Bug abilities (wall-crawl, swarm, teleporting Heisenbug) · boss fights (the "P0 Incident") · custom 3D models / animations / skins · LLM-generated flavor text · progression / unlocks / marketplace / accounts · multiple maps · mobile / touch controls.
+Open world / large streaming map · asymmetric Bug abilities (wall-crawl, swarm, teleporting Heisenbug) · boss fights (the "P0 Incident") · LLM-generated flavor text · progression / unlocks / marketplace / accounts · mobile / touch controls.
+
+**Un-parked for v1.1 (Rohit, 2026-07-12):** character/viewmodel visual detail (still primitives-only + procedural transform animation — no asset pipeline) and a second map + map picker. Hard rule for all v1.1 visual work: **hitboxes, colliders, and nav are FROZEN** — combat must be pixel-identical.
 
 ## Commands
 - `npm install` — deps (three, vite, lil-gui).

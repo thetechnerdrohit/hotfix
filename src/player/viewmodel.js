@@ -20,17 +20,29 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { VIEWMODEL, COMBAT, MOVE } from '../config.js';
+import { VIEWMODEL, COMBAT, MOVE, CHARACTER } from '../config.js';
 
 const _muzzleWorld = new THREE.Vector3();
 
 // A small helper to build a flat-shaded Lambert box mesh at a local offset.
-function box(w, h, d, x, y, z, color) {
+// Optional rotation (radians) for angled details (grips, forearms).
+function box(w, h, d, x, y, z, color, rx = 0, ry = 0, rz = 0) {
   const geo = new THREE.BoxGeometry(w, h, d);
   const mat = new THREE.MeshLambertMaterial({ color });
   const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
+  if (rx || ry || rz) m.rotation.set(rx, ry, rz);
   return m;
+}
+
+// v1.1 LOOKS: first-person hand/forearm hints in the palette's skin/glove tone —
+// two small boxes gripping the weapon so the player's hands read on screen. Pure
+// cosmetic children of the weapon rig; they do NOT move the muzzle anchor.
+function addHands(g, color, gripX, gripY, gripZ, foreZ) {
+  // Rear hand at the grip, forearm angled back toward the shoulder.
+  g.add(box(0.06, 0.06, 0.10, gripX, gripY, gripZ, color, 0.5, 0, 0));
+  // Front/support hand further down the barrel.
+  g.add(box(0.06, 0.055, 0.09, gripX * 0.4, gripY + 0.005, foreZ, color, 0.3, 0, 0));
 }
 
 export class Viewmodel {
@@ -73,37 +85,53 @@ export class Viewmodel {
   // Local space: +x right, +y up, −z forward (camera-local). The muzzle anchor
   // sits at the forward tip so getMuzzleWorldPos points at the barrel.
 
+  // v1.1 LOOKS: each weapon upgraded from a single box to a convincing low-poly
+  // silhouette (receiver/barrel/sight/mag/stock etc.) + hand hints. The muzzle
+  // anchor local position is UNCHANGED from v1.0 (the getMuzzleWorldPos contract
+  // the FX layer relies on — tracers/flash start there), so the added detail is
+  // purely visual and the shot truth (camera ray) is untouched.
+
   _buildRifle() {
     const g = new THREE.Group();
-    g.add(box(0.09, 0.10, 0.42, 0, 0, -0.14, 0x2f3646));   // receiver/body (slate)
-    g.add(box(0.05, 0.05, 0.30, 0, -0.01, -0.30, 0x232838)); // barrel (dark)
-    g.add(box(0.07, 0.14, 0.09, 0, -0.11, -0.02, 0x2a3040)); // grip
-    g.add(box(0.05, 0.10, 0.16, 0, -0.10, -0.20, 0x39414f)); // magazine
-    g.add(box(0.05, 0.03, 0.10, 0, 0.07, -0.10, 0x3fb89e));  // sight accent (teal)
+    g.add(box(0.09, 0.11, 0.34, 0, 0, -0.12, 0x2f3646));    // receiver/body (slate)
+    g.add(box(0.05, 0.055, 0.34, 0, 0.005, -0.32, 0x232838)); // barrel (dark, longer)
+    g.add(box(0.035, 0.035, 0.06, 0, 0.06, -0.44, 0x1b2030)); // front sight post
+    g.add(box(0.05, 0.03, 0.09, 0, 0.075, -0.08, 0x39414f)); // rear sight rail
+    g.add(box(0.05, 0.03, 0.10, 0, 0.075, -0.10, 0x3fb89e)); // sight accent (teal)
+    g.add(box(0.07, 0.15, 0.09, 0.0, -0.12, 0.0, 0x2a3040)); // pistol grip
+    g.add(box(0.055, 0.12, 0.16, 0, -0.11, -0.18, 0x2a2f3d)); // magazine (canted fwd)
+    g.add(box(0.06, 0.09, 0.14, 0, -0.01, 0.10, 0x272c3a));  // stock hint (rear)
+    addHands(g, CHARACTER.handColor, 0.02, -0.09, 0.0, -0.26); // trigger + support hands
     const muzzle = new THREE.Object3D();
-    muzzle.position.set(0, -0.01, -0.46);
+    muzzle.position.set(0, -0.01, -0.46); // UNCHANGED (FX contract)
     g.add(muzzle);
     return { group: g, muzzle };
   }
 
   _buildPistol() {
     const g = new THREE.Group();
-    g.add(box(0.07, 0.09, 0.20, 0, 0, -0.08, 0x2f3646));   // slide
-    g.add(box(0.04, 0.04, 0.10, 0, 0.005, -0.18, 0x232838)); // barrel
-    g.add(box(0.06, 0.12, 0.08, 0, -0.10, 0.0, 0x2a3040));  // grip
-    g.add(box(0.04, 0.02, 0.06, 0, 0.055, -0.10, 0x3fb89e)); // sight accent
+    g.add(box(0.06, 0.075, 0.22, 0, 0.01, -0.08, 0x2f3646)); // slide
+    g.add(box(0.055, 0.02, 0.20, 0, 0.055, -0.07, 0x39414f)); // slide top / rib
+    g.add(box(0.038, 0.038, 0.09, 0, 0.005, -0.18, 0x232838)); // barrel/muzzle end
+    g.add(box(0.045, 0.02, 0.055, 0, 0.06, -0.10, 0x3fb89e)); // sight accent
+    g.add(box(0.06, 0.13, 0.07, 0, -0.09, 0.02, 0x2a3040, 0.18)); // grip (angled)
+    g.add(box(0.02, 0.05, 0.05, 0.0, -0.035, -0.045, 0x1b2030)); // trigger-guard hint
+    addHands(g, CHARACTER.handColor, 0.01, -0.07, 0.02, -0.10);
     const muzzle = new THREE.Object3D();
-    muzzle.position.set(0, 0.005, -0.24);
+    muzzle.position.set(0, 0.005, -0.24); // UNCHANGED (FX contract)
     g.add(muzzle);
     return { group: g, muzzle };
   }
 
   _buildKnife() {
     const g = new THREE.Group();
-    g.add(box(0.03, 0.10, 0.06, 0, -0.06, 0.02, 0x2a3040));  // handle
-    g.add(box(0.02, 0.04, 0.26, 0, 0.0, -0.14, 0xcdd6e6));   // blade (bright)
-    const muzzle = new THREE.Object3D(); // "muzzle" = blade tip (tracer n/a, but flash anchor)
-    muzzle.position.set(0, 0.0, -0.28);
+    g.add(box(0.032, 0.10, 0.07, 0, -0.06, 0.04, 0x2a3040));  // handle
+    g.add(box(0.06, 0.02, 0.04, 0, -0.01, -0.02, 0x1b2030));  // guard (crossbar)
+    g.add(box(0.026, 0.05, 0.24, 0, 0.0, -0.14, 0xcdd6e6));   // blade spine (bright)
+    g.add(box(0.006, 0.052, 0.24, 0.014, 0.0, -0.14, 0xeef3fb)); // edge bevel (brighter)
+    addHands(g, CHARACTER.handColorKnife, 0.0, -0.1, 0.08, 0.02);
+    const muzzle = new THREE.Object3D(); // "muzzle" = blade tip (flash anchor; tracer n/a)
+    muzzle.position.set(0, 0.0, -0.28); // UNCHANGED (FX contract)
     g.add(muzzle);
     return { group: g, muzzle };
   }

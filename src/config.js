@@ -276,6 +276,38 @@ export const VIEWMODEL = {
 };
 
 // ---------------------------------------------------------------------------
+// CHARACTER — v1.1 LOOKS pass. Procedural, transform-only animation tunables for
+// the SE + Bug figures and the first-person hands. NO skeletal/asset animation:
+// every value here drives a leg/arm/antenna transform eased on game dt with
+// exp smoothing (B2/B6) — frame-rate independent, pause-safe, zero per-frame
+// alloc (I1). HITBOXES ARE FROZEN — nothing here touches bodyMin/bodyMax/
+// headCenter/headRadius or any collider; it only moves cosmetic child meshes.
+// ---------------------------------------------------------------------------
+export const CHARACTER = {
+  // -- Locomotion animation (both teams) ----------------------------------
+  animSmooth: 14,          // 1/s exp rate limb targets ease toward their pose (no snap)
+  strideHz: 2.2,           // leg-cycle frequency (Hz) at full run speed; scales with actual speed
+  strideMinSpeed: 0.3,     // m/s below which the figure is "standing" (idle sway only, no stride)
+  bobAmpBody: 0.035,       // m vertical body bob amplitude at full run (subtle)
+  bobHz: 2.0,              // idle body-bob frequency (Hz) — a slow breathing sway when standing
+
+  // -- SE dev figures ------------------------------------------------------
+  seLegSwingDeg: 34,       // peak fore/aft leg swing (deg) at full run
+  seArmSwingDeg: 10,       // peak arm counter-swing (deg) — small, arms hold the rifle
+  seIdleArmSwayDeg: 3,     // gentle idle arm sway (deg) when standing
+
+  // -- Bug creatures -------------------------------------------------------
+  bugLegSkitterDeg: 26,    // peak leg-stub skitter swing (deg) at full run — alternating tripod pairs
+  bugSkitterHzMult: 1.8,   // bug legs skitter faster than SE stride (× strideHz) — buggy, twitchy
+  bugAntennaSwayDeg: 14,   // antenna sway amplitude (deg) — driven by speed + idle wobble
+  bugBodyBobMult: 1.3,     // bug body bobs a touch more than an SE (× bobAmpBody)
+
+  // -- First-person hands (viewmodel) -------------------------------------
+  handColor: 0x9a7d63,     // neutral skin/glove tone for the forearm/hand hint boxes
+  handColorKnife: 0x8f7358, // slightly darker for the knife hand (reads distinct)
+};
+
+// ---------------------------------------------------------------------------
 // CROSSHAIR / HITMARKER — HUD combat-feedback tuning (register group G).
 // Per-frame crosshair changes are transform-only (G2/G8): thin, size-capped.
 // ---------------------------------------------------------------------------

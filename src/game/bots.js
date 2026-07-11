@@ -39,17 +39,27 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { COMBAT, BOTS, MOVE, PERF } from '../config.js';
+import { COMBAT, BOTS, MOVE, PERF, CHARACTER } from '../config.js';
 import { castRay, rayBlocked, makeHitResult } from '../combat/hitscan.js';
 import { applyDamage, falloffMult } from '../combat/damage.js';
+import { CharAnim } from './charAnim.js';
 
-// -- Theme palette (low-poly, flat Lambert) ---------------------------------
-const BUG_BODY = 0x2a2030;   // squat dark body
-const BUG_LEG = 0x1a141f;    // near-black leg stubs
-const BUG_HEAD_BG = '#3a0d12'; // error-label badge background (dark red)
-const BUG_HEAD_FG = '#ff5a4d'; // error-label text (hot red — reads as "bad")
-const SE_BODY = 0x566079;    // slate (matches the dummy body)
-const SE_HEAD = 0x3fb89e;    // teal head block (the "hit here" zone)
+// -- Theme palette (low-poly, flat Lambert). v1.1 LOOKS pass: richer silhouettes
+// built from primitives, but the HITBOXES ARE FROZEN — the extra meshes are pure
+// cosmetic children; nothing here changes BODY/HEAD_CENTER_Y or _refreshHitboxes.
+// Bug = team-red / sickly family; SE = teal/slate family (stay in prodMap PALETTE).
+const BUG_THORAX = 0x35202a;   // front segment (a touch warmer/redder)
+const BUG_ABDOMEN = 0x281820;  // rear segment (darker, sickly)
+const BUG_LEG = 0x160f14;      // near-black articulated leg stubs
+const BUG_ANTENNA = 0x4a2630;  // dull red antennae
+const BUG_HEAD_BG = '#2a0508'; // error-label badge plate (darker red terminal tag)
+const BUG_HEAD_FG = '#ff6f63'; // error-label text (brighter mono — reads as a glowing tag)
+const SE_TORSO = 0x566079;     // slate hoodie (matches the dummy body / prod palette)
+const SE_TORSO_HOOD = 0x455069; // darker two-tone hood/shoulder
+const SE_HEAD = 0x6b7690;      // head block (lighter slate)
+const SE_VISOR = 0x3fb89e;     // teal visor/face hint (SE identity)
+const SE_LIMB = 0x3f4860;      // arms/legs (dark slate)
+const SE_GUN = 0x232838;       // the little held rifle box (so fights read)
 const SE_LABEL_BG = '#12303a';
 const SE_LABEL_FG = '#9fe8d6';
 
@@ -225,7 +235,9 @@ export class Bot {
 
     // --- Meshes ------------------------------------------------------------
     this.group = new THREE.Group();
-    this.flinch = 0;          // s flinch flag (frontend renders it, like dummies)
+    this.flinch = 0;          // s flinch flag (the CharAnim renders it, like dummies' TargetFx)
+    this._animIndex = index;  // seeds the animator's per-bot stride phase (desync)
+    this.anim = null;         // set by _buildBug/_buildSe (procedural transform animator)
     if (team === 'bug') this._buildBug();
     else this._buildSe();
     this.group.visible = false; // match spawns → places → shows
@@ -234,76 +246,201 @@ export class Bot {
   }
 
   // ---- Mesh construction (low-poly, built here like targets.js) -----------
-  _buildBug() {
-    // Squat dark body box.
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(BODY.x, BODY.y, BODY.z),
-      new THREE.MeshLambertMaterial({ color: BUG_BODY }),
-    );
-    body.position.y = BODY.y / 2;
-    body.castShadow = PERF.shadows;
-    this.group.add(body);
-    this.bodyMesh = body;
+  //
+  // v1.1 LOOKS: both figures hang their body + limbs off a `_bobGroup` (an
+  // Object3D at the group origin) so the animator can bob the whole torso in Y
+  // without moving the group origin — feet stay planted and, crucially, the
+  // HITBOXES are computed from this.pos in _refreshHitboxes (NOT from any mesh
+  // transform), so this cosmetic bob never touches a hit volume. Swinging limbs
+  // are children in LOCAL space, carried by the group yaw for free. `tintMats`
+  // collects every Lambert material so the animator can flash them on flinch/
+  // death (bots have no separate render-fx pass — the animator IS that pass).
+  // `bodyMesh`/`headMesh`/`_nameLabel` keep their meaning for the combat/FX
+  // contract (bodyMesh = primary torso, headMesh = head/badge at the hitbox).
 
-    // Four tiny leg stubs at the base corners (pure flavor; no hitbox).
-    const legGeo = new THREE.BoxGeometry(0.08, 0.18, 0.08);
+  _buildBug() {
+    const bob = new THREE.Group();
+    this.group.add(bob);
+    this._bobGroup = bob;
+    const tintMats = [];
+    const legs = [], antennae = [];
+
+    // Two-segment body: thorax (front, larger) + abdomen (rear, tapered). Their
+    // combined footprint reads as the squat bug body; bodyMesh = the thorax
+    // (primary torso, the tint anchor). Slightly different tones per the brief.
+    const thoraxMat = new THREE.MeshLambertMaterial({ color: BUG_THORAX });
+    const thorax = new THREE.Mesh(new THREE.BoxGeometry(BODY.x, BODY.y * 0.62, BODY.z * 1.05), thoraxMat);
+    thorax.position.set(0, BODY.y * 0.42, -BODY.z * 0.18); // front-heavy
+    thorax.castShadow = PERF.shadows;
+    bob.add(thorax);
+    this.bodyMesh = thorax;
+    tintMats.push(thoraxMat);
+
+    const abdoMat = new THREE.MeshLambertMaterial({ color: BUG_ABDOMEN });
+    const abdomen = new THREE.Mesh(new THREE.BoxGeometry(BODY.x * 0.82, BODY.y * 0.5, BODY.z * 0.95), abdoMat);
+    abdomen.position.set(0, BODY.y * 0.3, BODY.z * 0.55); // sits behind + lower
+    abdomen.castShadow = PERF.shadows;
+    bob.add(abdomen);
+    tintMats.push(abdoMat);
+
+    // Four articulated leg stubs (two per side), each pivoting from a hip nub
+    // near the thorax. The animator swings them in alternating pairs (a skitter).
+    // Each leg is a child Group so rotation.x pivots from the hip, not the mesh
+    // centre. (4 legs keeps the per-bot mesh count ≤10 — draw-call budget I6.)
     const legMat = new THREE.MeshLambertMaterial({ color: BUG_LEG });
-    const lx = BODY.x / 2 - 0.06, lz = BODY.z / 2 - 0.06;
+    tintMats.push(legMat);
+    const legGeo = new THREE.BoxGeometry(0.07, 0.05, 0.26);
+    const hipX = BODY.x / 2 - 0.02;
     for (let i = 0; i < 4; i++) {
+      const side = i < 2 ? -1 : 1;
+      const row = i % 2;                       // 0 front, 1 rear
+      const hip = new THREE.Group();
+      hip.position.set(side * hipX, 0.17, (row === 0 ? -1 : 1) * BODY.z * 0.35);
       const leg = new THREE.Mesh(legGeo, legMat);
-      leg.position.set((i & 1 ? lx : -lx), 0.09, (i & 2 ? lz : -lz));
-      this.group.add(leg);
+      leg.position.set(side * 0.11, -0.06, 0); // splay out + down from the hip
+      leg.rotation.z = side * 0.5;
+      leg.castShadow = PERF.shadows;
+      hip.add(leg);
+      bob.add(hip);
+      legs.push(hip); // animate the HIP pivot (rotation.x)
     }
 
-    // Error-label head badge — the label IS the head hitbox (Phase 3 line 1).
-    this._buildLabelHead(BUG_HEAD_BG, BUG_HEAD_FG);
+    // Two short antennae off the front, above the badge.
+    const antMat = new THREE.MeshLambertMaterial({ color: BUG_ANTENNA });
+    tintMats.push(antMat);
+    const antGeo = new THREE.BoxGeometry(0.03, 0.22, 0.03);
+    for (let i = 0; i < 2; i++) {
+      const base = new THREE.Group();
+      base.position.set((i === 0 ? -1 : 1) * 0.1, HEAD_CENTER_Y + HEAD_EDGE * 0.4, -BODY.z * 0.35);
+      const ant = new THREE.Mesh(antGeo, antMat);
+      ant.position.y = 0.11;
+      ant.rotation.x = -0.35; // lean forward
+      base.add(ant);
+      bob.add(base);
+      antennae.push(base);
+    }
+
+    // Error-label head badge — the label IS the head hitbox. Glowing terminal tag.
+    this._buildLabelHead(BUG_HEAD_BG, BUG_HEAD_FG, bob);
+
+    this.anim = new CharAnim('bug', {
+      legs, antennae, bobGroup: bob, tintMats,
+    }, this._animIndex);
   }
 
   _buildSe() {
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(BODY.x, BODY.y, BODY.z),
-      new THREE.MeshLambertMaterial({ color: SE_BODY }),
-    );
-    body.position.y = BODY.y / 2;
-    body.castShadow = PERF.shadows;
-    this.group.add(body);
-    this.bodyMesh = body;
+    const bob = new THREE.Group();
+    this.group.add(bob);
+    this._bobGroup = bob;
+    const tintMats = [];
+    const legs = [], arms = [];
 
-    // Teal head cube (the readable hit zone), plus a small name label above it.
-    const head = new THREE.Mesh(
-      new THREE.BoxGeometry(HEAD_EDGE, HEAD_EDGE, HEAD_EDGE),
-      new THREE.MeshLambertMaterial({ color: SE_HEAD }),
-    );
+    // Two-tone torso: a hoodie body + a darker hood/shoulder cap on top. bodyMesh
+    // = the main torso (tint anchor). Torso is a touch shorter than BODY.y so legs
+    // fill the bottom; the overall silhouette still fills the frozen body box.
+    const torsoMat = new THREE.MeshLambertMaterial({ color: SE_TORSO });
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(BODY.x, BODY.y * 0.55, BODY.z), torsoMat);
+    torso.position.y = BODY.y * 0.58;
+    torso.castShadow = PERF.shadows;
+    bob.add(torso);
+    this.bodyMesh = torso;
+    tintMats.push(torsoMat);
+
+    const hoodMat = new THREE.MeshLambertMaterial({ color: SE_TORSO_HOOD });
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(BODY.x * 1.02, BODY.y * 0.18, BODY.z * 1.04), hoodMat);
+    hood.position.y = BODY.y * 0.82;
+    hood.castShadow = PERF.shadows;
+    bob.add(hood);
+    tintMats.push(hoodMat);
+
+    // Head block with a teal visor slab hint (the "face"). headMesh = the block,
+    // sitting at HEAD_CENTER_Y (the hit zone). The visor is a thin basic-lit slab
+    // (kept off the tint list so it reads as an emissive-ish face accent).
+    const headMat = new THREE.MeshLambertMaterial({ color: SE_HEAD });
+    const head = new THREE.Mesh(new THREE.BoxGeometry(HEAD_EDGE, HEAD_EDGE, HEAD_EDGE), headMat);
     head.position.y = HEAD_CENTER_Y;
     head.castShadow = PERF.shadows;
-    this.group.add(head);
+    bob.add(head);
     this.headMesh = head;
+    tintMats.push(headMat);
 
-    this._buildNameLabel(SE_LABEL_BG, SE_LABEL_FG, HEAD_CENTER_Y + HEAD_EDGE / 2 + 0.14);
+    const visor = new THREE.Mesh(
+      new THREE.BoxGeometry(HEAD_EDGE * 0.86, HEAD_EDGE * 0.32, 0.03),
+      new THREE.MeshBasicMaterial({ color: SE_VISOR }), // basic: the visor stays lit/legible
+    );
+    visor.position.set(0, HEAD_CENTER_Y + 0.02, -HEAD_EDGE / 2 - 0.005);
+    bob.add(visor);
+
+    // Two legs (pivot from the hip, filling the lower body box) that walk-swing.
+    const limbMat = new THREE.MeshLambertMaterial({ color: SE_LIMB });
+    tintMats.push(limbMat);
+    const legGeo = new THREE.BoxGeometry(0.17, BODY.y * 0.42, BODY.z * 0.9);
+    for (let i = 0; i < 2; i++) {
+      const hip = new THREE.Group();
+      hip.position.set((i === 0 ? -1 : 1) * BODY.x * 0.24, BODY.y * 0.32, 0);
+      const leg = new THREE.Mesh(legGeo, limbMat);
+      leg.position.y = -BODY.y * 0.2; // hang below the hip
+      leg.castShadow = PERF.shadows;
+      hip.add(leg);
+      bob.add(hip);
+      legs.push(hip);
+    }
+
+    // Two arms in a held-rifle pose, angled forward. The RIGHT arm carries a
+    // small gun box so fights read at a glance. Arms pivot from the shoulder.
+    const armGeo = new THREE.BoxGeometry(0.11, BODY.y * 0.4, 0.13);
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? -1 : 1;
+      const shoulder = new THREE.Group();
+      shoulder.position.set(side * (BODY.x / 2 + 0.02), BODY.y * 0.72, 0);
+      shoulder.rotation.x = -0.5; // arms forward, holding a weapon
+      const arm = new THREE.Mesh(armGeo, limbMat);
+      arm.position.y = -BODY.y * 0.18;
+      arm.castShadow = PERF.shadows;
+      shoulder.add(arm);
+      bob.add(shoulder);
+      arms.push(shoulder);
+    }
+    // A little rifle in the hands, parented to the right shoulder so it rides the
+    // arm swing. Pure cosmetic (bots hitscan from headCenter; this fires nothing).
+    const gun = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 0.09, 0.5),
+      new THREE.MeshLambertMaterial({ color: SE_GUN }),
+    );
+    gun.position.set(-BODY.x * 0.28, -BODY.y * 0.34, -0.2);
+    arms[1].add(gun); // right shoulder holds it forward
+    tintMats.push(gun.material);
+
+    this._buildNameLabel(SE_LABEL_BG, SE_LABEL_FG, HEAD_CENTER_Y + HEAD_EDGE / 2 + 0.14, bob);
+
+    this.anim = new CharAnim('se', {
+      legs, arms, bobGroup: bob, tintMats,
+    }, this._animIndex);
   }
 
   // A CanvasTexture badge box that renders the bot's name in monospace. For a
   // Bug this box occupies the head slot (it's the hit target). Built once; the
-  // texture never updates per frame (I1/G2-style discipline).
-  _buildLabelHead(bg, fg) {
+  // texture never updates per frame (I1/G2-style discipline). Basic-lit so it
+  // reads as a glowing terminal tag and is EXCLUDED from the tint list.
+  _buildLabelHead(bg, fg, parent) {
     const tex = this._nameTexture(this.name, bg, fg);
     // A slightly flattened box so the label reads on the front/back faces.
     const geo = new THREE.BoxGeometry(HEAD_EDGE * 1.9, HEAD_EDGE, 0.06);
     const mat = new THREE.MeshBasicMaterial({ map: tex }); // basic: label stays legible unlit
     const head = new THREE.Mesh(geo, mat);
     head.position.y = HEAD_CENTER_Y;
-    this.group.add(head);
+    (parent ?? this.group).add(head);
     this.headMesh = head;
   }
 
-  _buildNameLabel(bg, fg, y) {
+  _buildNameLabel(bg, fg, y, parent) {
     const tex = this._nameTexture(this.name, bg, fg);
     const geo = new THREE.PlaneGeometry(0.9, 0.24);
     const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide });
     const label = new THREE.Mesh(geo, mat);
     label.position.y = y;
     this._nameLabel = label;
-    this.group.add(label);
+    (parent ?? this.group).add(label);
   }
 
   // Render `text` to a small canvas → CanvasTexture. Allocated once per bot at
@@ -441,6 +578,15 @@ export class Bot {
     this.group.position.copy(this.pos);
     this._faceForwardMesh();
     this._refreshHitboxes();
+
+    // Cosmetic procedural animation (transform-only, game dt) + flinch/death
+    // tint. Runs AFTER hitboxes so it can never influence them; the animator
+    // only writes child-mesh transforms + material emissive (I1). A living bot
+    // is never dead here, but pass this.dead for edge-safety on the tint pass.
+    if (this.anim) {
+      const speed = Math.sqrt(this.vel.x * this.vel.x + this.vel.z * this.vel.z);
+      this.anim.tick(dt, speed, this.flinch, this.tuning.flinchTime, this.dead);
+    }
   }
 
   _faceForwardMesh() {
