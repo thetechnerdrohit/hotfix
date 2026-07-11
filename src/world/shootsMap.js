@@ -165,7 +165,13 @@ function colorFor(k, top, h, i) {
   }
 }
 
-export function buildShootsMap() {
+// opts (v2.0 Battleground embedding): { berm: 'sealed'|'gated', backdrop: true|false }
+//  - 'gated': each berm side becomes two segments with a 7 m central gap, so the
+//    compound embeds as a walled POI with four doors (render + colliders agree).
+//  - backdrop:false suppresses the skyline (the host map builds its own ring).
+export function buildShootsMap(opts = {}) {
+  const BERM_MODE = opts.berm ?? 'sealed';
+  const WANT_BACKDROP = opts.backdrop ?? true;
   const group = new THREE.Group();
   const colliders = [];
   const buckets = new Map(); // colorHex → BufferGeometry[]
@@ -214,10 +220,27 @@ export function buildShootsMap() {
     addRender(w, h, d, x, bermTop + h / 2, z, PALETTE.berm);
     addCollider(w, h, d, x, bermTop + h / 2, z);
   }
-  berm(HALF_X * 2 + WALL_T * 2, WALL_H, WALL_T, 0, MAXZ + WALL_T / 2 + 1); // north (+Z)
-  berm(HALF_X * 2 + WALL_T * 2, WALL_H, WALL_T, 0, MINZ - WALL_T / 2 - 1); // south (−Z)
-  berm(WALL_T, WALL_H, HALF_Z * 2 + WALL_T * 2, MAXX + WALL_T / 2 + 1, (MINZ + MAXZ) / 2); // east
-  berm(WALL_T, WALL_H, HALF_Z * 2 + WALL_T * 2, MINX - WALL_T / 2 - 1, (MINZ + MAXZ) / 2); // west
+  const GATE = BERM_MODE === 'gated' ? 7 : 0; // central gap per side (v2.0 embedding)
+  const NZ = MAXZ + WALL_T / 2 + 1, SZ = MINZ - WALL_T / 2 - 1;
+  const EX = MAXX + WALL_T / 2 + 1, WX = MINX - WALL_T / 2 - 1;
+  const CZM = (MINZ + MAXZ) / 2;
+  if (!GATE) {
+    berm(HALF_X * 2 + WALL_T * 2, WALL_H, WALL_T, 0, NZ); // north (+Z)
+    berm(HALF_X * 2 + WALL_T * 2, WALL_H, WALL_T, 0, SZ); // south (−Z)
+    berm(WALL_T, WALL_H, HALF_Z * 2 + WALL_T * 2, EX, CZM); // east
+    berm(WALL_T, WALL_H, HALF_Z * 2 + WALL_T * 2, WX, CZM); // west
+  } else {
+    const segX = HALF_X + WALL_T - GATE / 2; // per-side segment length (x-running walls)
+    berm(segX, WALL_H, WALL_T, -(GATE / 2 + segX / 2), NZ);
+    berm(segX, WALL_H, WALL_T, +(GATE / 2 + segX / 2), NZ);
+    berm(segX, WALL_H, WALL_T, -(GATE / 2 + segX / 2), SZ);
+    berm(segX, WALL_H, WALL_T, +(GATE / 2 + segX / 2), SZ);
+    const segZ = HALF_Z + WALL_T - GATE / 2;
+    berm(WALL_T, WALL_H, segZ, EX, CZM - (GATE / 2 + segZ / 2));
+    berm(WALL_T, WALL_H, segZ, EX, CZM + (GATE / 2 + segZ / 2));
+    berm(WALL_T, WALL_H, segZ, WX, CZM - (GATE / 2 + segZ / 2));
+    berm(WALL_T, WALL_H, segZ, WX, CZM + (GATE / 2 + segZ / 2));
+  }
 
   // (M6 stair carve is applied above by carveShoots() — see shootsCarve.js. It
   //  replaced `carve.dropped` buried solid props with `carve.added` stepped tread
@@ -307,7 +330,7 @@ export function buildShootsMap() {
   //    vegetation bands. All merged: skyline 1 draw, plants 2 draws.
   {
     const skyGeos = [];
-    for (const b of BACKDROP.boxes) {
+    for (const b of WANT_BACKDROP ? BACKDROP.boxes : []) {
       const g0 = new THREE.BoxGeometry(Math.max(0.05, b.s[0]), Math.max(0.05, b.s[1]), Math.max(0.05, b.s[2]));
       g0.translate(b.c[0], Math.max(b.c[1], b.s[1] / 2 - 0.5), b.c[2] + DZ);
       skyGeos.push(g0);
@@ -482,6 +505,9 @@ export function buildShootsMap() {
     bugSpawns,
     waypointNodes,
     ropes, // v1.5 — climbable rope lines (controller consumes)
+    gates: BERM_MODE === 'gated' ? [ // v2.0 — door centers for the host's nav bridge
+      { x: 0, z: NZ }, { x: 0, z: SZ }, { x: EX, z: CZM }, { x: WX, z: CZM },
+    ] : [],
     background,
     fog,
     update,

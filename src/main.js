@@ -16,6 +16,7 @@ import { Viewmodel } from './player/viewmodel.js';
 import { buildTestRoom } from './world/testRoom.js';
 import { buildProdMap } from './world/prodMap.js';
 import { buildShootsMap } from './world/shootsMap.js';
+import { buildBattleMap } from './world/battleMap.js';
 import { buildTargets } from './world/targets.js';
 import { makeGraph } from './world/waypoints.js';
 import { WeaponSystem } from './combat/weapons.js';
@@ -151,9 +152,13 @@ function boot() {
   // The MAP owns its palette (Phase 4): build*() returns background + fog so a
   // map can tune its own look (Prod's fog far-plane is set to keep the 28 m
   // A-lane sightline visible — fog must never hide a balanced sightline).
+  // v2.0: the Battleground (compound + fields + camps + great trees) is the
+  // shipped map; the compound-only arena stays at DEV ?room=shoots.
+  const WANT_SHOOTS = import.meta.env.DEV && params.get('room') === 'shoots';
   const room = WANT_TEST_ROOM ? buildTestRoom()
     : WANT_PROD ? buildProdMap()
-    : buildShootsMap();
+    : WANT_SHOOTS ? buildShootsMap()
+    : buildBattleMap();
 
   const scene = new THREE.Scene();
   scene.background = room.background;
