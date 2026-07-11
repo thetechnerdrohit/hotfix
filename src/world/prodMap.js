@@ -52,6 +52,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PERF } from '../config.js';
 import { rayBlocked } from '../combat/hitscan.js';
+import { makeSignTexture, makeGradientTexture, makeSignMesh } from './decor.js';
 
 // -- Palette. Extends the testRoom COLORS discipline; keeps the Phase-1 flat
 //    NoToneMapping look. SE half accents teal, Bug half accents orange; A-lane a
@@ -75,6 +76,11 @@ const PALETTE = {
   laneCool:  0x7cbcd4,  // A-lane cool light strip (north)
   laneWarm:  0xdda65c,  // B-corridor warm strip (south)
 };
+
+// LED strip tints (server-rack detail). Emissive materials driven by the shared
+// map.update(dt) pulse (one material per color, not per-LED — § brief).
+const LED_TEAL = 0x37e0c2;
+const LED_AMBER = 0xffcf6a;
 
 // Arena extents (interior play area). ~40 (X) × 28 (Z); walls 4 m tall.
 const HALF_X = 20;   // interior spans X ∈ [−20, 20]  (40 m)
@@ -287,6 +293,210 @@ export function buildProdMap() {
   addBox(9.4, 0.25, 0.1, 0, 0.9, bInnerFace + 0.06, PALETTE.laneWarm, { collide: false });
 
   // ==========================================================================
+  // SET-DRESSING (v1.1 MAPS pass — ALL VISUAL, collide:false or baked INTO an
+  // existing collider footprint; nav/spawns/sightlines are FROZEN, verified
+  // byte-identical). Three parts:
+  //   1) animated server-rack LED strips (blink via map.update — shared mats)
+  //   2) CanvasTexture signage on wall faces + floor lane markings
+  //   3) overhead cable-tray run + a background gradient plane
+  // ==========================================================================
+
+  // --- 1) SERVER-RACK LED DETAIL ------------------------------------------
+  // Thin emissive strips on the rack faces, INSIDE each rack's collider
+  // footprint (racks are 0.6 thick in one axis; strips sit ~0.31 off-center so
+  // they hug the face without adding collision — decoration only). TWO shared
+  // emissive materials (teal / amber) whose intensity map.update() pulses — so
+  // the whole rack farm blinks at ~2 draw calls, zero per-frame allocation.
+  const ledTealMat = new THREE.MeshBasicMaterial({ color: LED_TEAL, toneMapped: false });
+  const ledAmberMat = new THREE.MeshBasicMaterial({ color: LED_AMBER, toneMapped: false });
+  const ledTealGeos = [];
+  const ledAmberGeos = [];
+  // A thin LED quad on a rack's ±X face (racks in mid + A-lane are 0.6 thick in
+  // X). x = rack center; faceSign picks which face; strips run vertically in Z.
+  function ledStrip(geoList, x, z, faceSign, y, len) {
+    const g = new THREE.BoxGeometry(0.02, 0.06, len);
+    g.translate(x + faceSign * 0.31, y, z); // 0.31 = just proud of the 0.30 half-thickness face
+    geoList.push(g);
+  }
+  function ledDots(geoList, x, z, faceSign, ys) {
+    for (let i = 0; i < ys.length; i++) {
+      const g = new THREE.BoxGeometry(0.04, 0.05, 0.05);
+      g.translate(x + faceSign * 0.31, ys[i], z);
+      geoList.push(g);
+    }
+  }
+  // Mid racks (x=∓2.5). Vertical strip up each inner face + a column of status dots.
+  ledStrip(ledTealGeos, -2.5, -3.2, +1, 1.1, 3.2); // rack A inner (east) face — teal
+  ledDots(ledTealGeos, -2.5, -3.2, +1, [0.5, 0.9, 1.3, 1.7]);
+  ledStrip(ledAmberGeos, 2.5, 3.2, -1, 1.1, 3.2);  // rack B inner (west) face — amber
+  ledDots(ledAmberGeos, 2.5, 3.2, -1, [0.5, 0.9, 1.3, 1.7]);
+  // A-lane third-point cover racks (x=∓4.3, thin in Z=0.6). Strips on their south
+  // face (toward mid) run in X. addSym'd geometry, so dress both twins.
+  function ledStripX(geoList, x, z, faceSign, y, len) {
+    const g = new THREE.BoxGeometry(len, 0.06, 0.02);
+    g.translate(x, y, z + faceSign * 0.31);
+    geoList.push(g);
+  }
+  ledStripX(ledTealGeos, -4.3, -10.2, +1, 1.6, 1.8);  // SE A-cover, south face — teal
+  ledStripX(ledAmberGeos, 4.3, -10.2, +1, 1.6, 1.8);  // Bug A-cover, south face — amber
+
+  // --- 2a) SIGNAGE (CanvasTexture wall signs, flush on wall faces) ----------
+  // Spawn-door banners over the inner walls, lane markers at the lane mouths, and
+  // a big PROD on the north wall. All are flat planes offset 0.01 off the face —
+  // non-colliding (makeSignMesh never registers a collider). Kept in a small
+  // list so we can add them to the group after the merge (signs use their own
+  // MeshBasicMaterial + CanvasTexture, so they're NOT part of the color merge).
+  const signs = [];
+  const addSign = (tex, w, h, x, y, z, rotY) => {
+    const m = makeSignMesh(tex, w, h);
+    m.position.set(x, y, z);
+    if (rotY) m.rotation.y = rotY;
+    m.updateMatrix();
+    signs.push(m);
+  };
+  // "DEV BAY" (teal) over the SE center door, facing east into the field.
+  addSign(makeSignTexture('DEV BAY', '#4fe0c6'), 3.2, 0.8, -INNER_X + 0.31, 3.1, 0, -Math.PI / 2);
+  // "LEGACY WING" (orange) over the Bug center door, facing west.
+  addSign(makeSignTexture('LEGACY WING', '#ff9a4d'), 3.6, 0.8, INNER_X - 0.31, 3.1, 0, Math.PI / 2);
+  // Big "PROD" on the north perimeter wall (cool), facing south into the arena.
+  addSign(makeSignTexture('PROD', '#9fd6e8', { w: 512, h: 160 }), 7.0, 2.2, 0, 3.0, -HALF_Z + 0.32, 0);
+  // Lane markers "A" (cool, north) / "B" (warm, south) at the center divider gap.
+  addSign(makeSignTexture('A', '#7cbcd4', { w: 128, h: 128 }), 0.9, 0.9, 0, 3.4, A_DIV_Z - 0.32, Math.PI);
+  addSign(makeSignTexture('B', '#dda65c', { w: 128, h: 128 }), 0.9, 0.9, 0, 3.4, bInnerFace + 0.02, 0);
+
+  // --- 2b) FLOOR LANE MARKINGS (painted quads on the floor, y≈0.02) ---------
+  // Non-colliding (thin, flat) — a cool centerline tracing the A-lane, a warm one
+  // for B, and hazard-stripe pads at the mid flank connectors. Baked as painted
+  // quads into their own tiny color buckets via addBox(collide:false).
+  addBox(20, 0.01, 0.5, 0, 0.02, -11.5, PALETTE.laneCool, { collide: false }); // A-lane centerline
+  addBox(20, 0.01, 0.5, 0, 0.02, 12.6, PALETTE.laneWarm, { collide: false });  // B-corridor centerline
+  // Hazard pads at the four flank-connector mouths (x≈±7, z=±7).
+  const hazard = 0xdcb23a;
+  addSym(3.0, 0.01, 1.2, -7.0, 0.015, -7.0, hazard, { collide: false }); // A connectors
+  addSym(3.0, 0.01, 1.2, -7.0, 0.015, 7.0, hazard, { collide: false });  // B connectors
+
+  // --- 3) OVERHEAD + BACKDROP ---------------------------------------------
+  // Sparse cable-tray/pipe run above mid — ≥3 m up (walk clearance is untouched;
+  // nothing walkable passes under 2.4 m of it), non-colliding, visual depth. Two
+  // long trays spanning X over mid at y=3.2, plus a couple of cross pipes.
+  const tray = 0x2b3446;
+  addBox(24, 0.18, 0.35, 0, 3.2, -2.5, tray, { collide: false });
+  addBox(24, 0.18, 0.35, 0, 3.2, 2.5, tray, { collide: false });
+  addBox(0.3, 0.14, 8, -6, 3.15, 0, tray, { collide: false });
+  addBox(0.3, 0.14, 8, 6, 3.15, 0, tray, { collide: false });
+
+  // Subtle vertical background gradient plane behind the far (north) wall so the
+  // void above the walls reads intentional (§ brief). A big backdrop plane, well
+  // outside play, non-colliding, unlit (MeshBasic). One draw call.
+  const gradTex = makeGradientTexture('#243247', '#12192a');
+  const backdrop = new THREE.Mesh(
+    new THREE.PlaneGeometry(120, 40),
+    new THREE.MeshBasicMaterial({ map: gradTex, depthWrite: false, fog: false, toneMapped: false }),
+  );
+  backdrop.position.set(0, 12, -HALF_Z - 8);
+  backdrop.matrixAutoUpdate = false;
+  backdrop.updateMatrix();
+  group.add(backdrop);
+
+  // --- 4) WALL PANEL DETAILING (thin trim on wall faces) ------------------
+  // Inset/outset trim strips baked flush onto the perimeter wall INNER faces so
+  // the big flat walls read as paneled server-hall surfaces. All proud of the
+  // face by ~0.04 m (never intruding into walk space) and collide:false. Two
+  // shades (a darker recessed groove + a lighter raised rib) for depth. Runs are
+  // horizontal bands at two heights along N/S/E/W inner faces.
+  const trimDark = 0x2f3647;   // recessed groove (darker than wall 0x6d7994)
+  const trimLite = 0x828ea8;   // raised rib (lighter than wall)
+  // Inner-face planes: north inner face z=−HALF_Z+ (wall centered at −HALF_Z−T/2,
+  // inner face ≈ −HALF_Z). We sit trim at z=−HALF_Z+0.04 etc.
+  const NF = -HALF_Z + 0.04, SF = HALF_Z - 0.04, WF = -HALF_X + 0.04, EF = HALF_X - 0.04;
+  // Horizontal bands on N & S walls (full width), two heights.
+  for (const [y, col] of [[1.3, trimDark], [2.7, trimLite]]) {
+    addBox(HALF_X * 2 - 1, 0.12, 0.03, 0, y, NF, col, { collide: false });
+    addBox(HALF_X * 2 - 1, 0.12, 0.03, 0, y, SF, col, { collide: false });
+  }
+  // Horizontal bands on E & W back walls (full depth), two heights.
+  for (const [y, col] of [[1.3, trimDark], [2.7, trimLite]]) {
+    addBox(0.03, 0.12, HALF_Z * 2 - 1, WF, y, 0, col, { collide: false });
+    addBox(0.03, 0.12, HALF_Z * 2 - 1, EF, y, 0, col, { collide: false });
+  }
+  // Vertical pilaster ribs on the back walls (evenly spaced) — structural rhythm.
+  for (let z = -10; z <= 10; z += 5) {
+    addBox(0.04, WALL_H - 0.6, 0.18, WF, 0, z, trimLite, { collide: false });
+    addBox(0.04, WALL_H - 0.6, 0.18, EF, 0, z, trimLite, { collide: false });
+  }
+
+  // --- 5) PERIMETER VENT GLOW (a 3rd — animated — LED group) --------------
+  // Emissive vent slots low on the N/S perimeter inner faces, a cool cyan that
+  // slowly breathes via a SEPARATE shared material (the 3rd animated group, at
+  // the ≤3 budget). Reads as HVAC/airflow in the data hall. collide:false.
+  const ventMat = new THREE.MeshBasicMaterial({ color: 0x2c8fb0, toneMapped: false });
+  const ventGeos = [];
+  const vent = (x, z) => {
+    const g = new THREE.BoxGeometry(0.9, 0.12, 0.03);
+    g.translate(x, 0.55, z);
+    ventGeos.push(g);
+  };
+  for (let x = -16; x <= 16; x += 4) { vent(x, NF); vent(x, SF); }
+
+  // --- 6) CEILING-EDGE ACCENT STRIPS --------------------------------------
+  // A continuous cool strip running the top perimeter edge (y≈WALL_H−0.15) — a
+  // static emissive rim so the ceiling line reads. Its own tiny bucket color
+  // (not animated; steady glow). collide:false.
+  const rim = 0x4a6f86;
+  addBox(HALF_X * 2, 0.1, 0.06, 0, WALL_H - 0.15, NF, rim, { collide: false });
+  addBox(HALF_X * 2, 0.1, 0.06, 0, WALL_H - 0.15, SF, rim, { collide: false });
+  addBox(0.06, 0.1, HALF_Z * 2, WF, WALL_H - 0.15, 0, rim, { collide: false });
+  addBox(0.06, 0.1, HALF_Z * 2, EF, WALL_H - 0.15, 0, rim, { collide: false });
+
+  // --- 7) DEV BAY / LEGACY WING INTERIOR CLUTTER (non-colliding) ----------
+  // Desk + monitor blocks giving each spawn room lived-in character. STRICT
+  // safety: every prop is collide:false (bullets/movement pass through — Prod
+  // gameplay is byte-identical), sits ≥0.6 m clear of all 4 team spawns, and
+  // never occupies a doorway. Placed against the back/side walls of the bay.
+  // addSym mirrors each into Legacy Wing (Bug side) with the team accent swapped.
+  // SE spawns (avoid): (−17,−9.5) (−18.5,−2) (−17.5,6) (−15.5,−4.5). Doors at
+  // x=−13. All desks live at x≤−18.2 (deep against the west wall) or the far
+  // corners, well clear.
+  const deskTop = 0x394253;   // dark desk surface
+  const deskLeg = 0x2b3240;   // desk frame
+  const monitor = 0x11161f;   // monitor bezel (near-black)
+  const monGlow = { se: 0x2f9c86, bug: 0xd06a2c }; // screen glow (team-tinted)
+  // A desk unit: top slab + a front rail + a small monitor block + a glowing
+  // screen quad, authored on the SE side and X-mirrored. `z` is the desk center;
+  // desks hug the west wall (x≈−19.3) facing east into the room.
+  const monGlowSeGeos = [];
+  const monGlowBugGeos = [];
+  function deskUnit(z) {
+    const dx = -19.2;
+    addSym(1.4, 0.06, 0.7, dx, 0.95, z, deskTop, { collide: false }); // desk top slab (y≈0.98)
+    addSym(0.06, 0.95, 0.6, dx - 0.6, 0, z, deskLeg, { collide: false }); // back leg panel
+    addSym(0.06, 0.95, 0.6, dx + 0.6, 0, z, deskLeg, { collide: false }); // front leg panel
+    addSym(0.5, 0.34, 0.05, dx, 1.04, z, monitor, { collide: false });    // monitor bezel on the desk
+    // Screen glow quad (team-tinted, its own emissive bucket) — proud of the bezel.
+    const gSe = new THREE.BoxGeometry(0.42, 0.26, 0.02); gSe.translate(dx + 0.04, 1.04, z); monGlowSeGeos.push(gSe);
+    const gBug = new THREE.BoxGeometry(0.42, 0.26, 0.02); gBug.translate(-(dx + 0.04), 1.04, z); monGlowBugGeos.push(gBug);
+  }
+  // Three desks along the west wall at z clear of every spawn (nearest spawn is
+  // −9.5; these sit at −12.5, 0.5, 9.0 — all ≥1.6 m from any spawn, none near a
+  // door, all at x≈−19.2 hard against the back wall).
+  deskUnit(-12.5);
+  deskUnit(0.5);
+  deskUnit(9.0);
+  // A couple of floor-standing tower/crate clutter blocks in the deep corners
+  // (never on a spawn or a spawn↔door line; collide:false so paths are frozen).
+  addSym(0.5, 1.2, 0.5, -19.4, 0, -13.0, deskLeg, { collide: false }); // NW corner tower
+  addSym(0.5, 0.8, 0.5, -19.4, 0, 3.5, deskLeg, { collide: false });   // mid-wall tower
+
+  // --- 8) HANGING CABLE BUNDLES (thin drops from the overhead trays) ------
+  // A few slack cable bundles dropping from the mid cable-trays — thin vertical
+  // boxes hung high (top at the tray y=3.2, dropping ~1 m, so their bottom is
+  // ≥2.0 m — well above head height; nothing walkable is affected). collide:false.
+  const cable = 0x1d2430;
+  for (const [x, z] of [[-4, -2.5], [3, 2.5], [7, -2.5], [-7, 2.5]]) {
+    addBox(0.06, 1.0, 0.06, x, 2.2, z, cable, { collide: false });
+  }
+
+  // ==========================================================================
   // MERGE static geometry per color → one mesh per material (I6). Colliders are
   // already collected above (per-box), so this is purely the render side. Each
   // merged mesh is static: matrixAutoUpdate off, shadows per PERF.
@@ -316,6 +526,48 @@ export function buildProdMap() {
   grid.matrixAutoUpdate = false;
   grid.updateMatrix();
   group.add(grid);
+
+  // LED meshes — one merged mesh per shared emissive material (≤2 draw calls).
+  // Kept referenced so map.update(dt) can pulse the material colors (blink).
+  const ledMeshes = [];
+  if (ledTealGeos.length) {
+    const mesh = new THREE.Mesh(mergeGeometries(ledTealGeos, false), ledTealMat);
+    mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+    for (const g of ledTealGeos) g.dispose();
+    group.add(mesh); ledMeshes.push(mesh);
+  }
+  if (ledAmberGeos.length) {
+    const mesh = new THREE.Mesh(mergeGeometries(ledAmberGeos, false), ledAmberMat);
+    mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+    for (const g of ledAmberGeos) g.dispose();
+    group.add(mesh); ledMeshes.push(mesh);
+  }
+  // Perimeter vent glow — the 3rd animated group (breathes in update()).
+  if (ventGeos.length) {
+    const mesh = new THREE.Mesh(mergeGeometries(ventGeos, false), ventMat);
+    mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+    for (const g of ventGeos) g.dispose();
+    group.add(mesh);
+  }
+  // Monitor screen glows — STEADY emissive (not animated), one merged mesh per
+  // team tint. Their own MeshBasic materials (emissive look under NoToneMapping).
+  if (monGlowSeGeos.length) {
+    const mesh = new THREE.Mesh(mergeGeometries(monGlowSeGeos, false),
+      new THREE.MeshBasicMaterial({ color: monGlow.se, toneMapped: false }));
+    mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+    for (const g of monGlowSeGeos) g.dispose();
+    group.add(mesh);
+  }
+  if (monGlowBugGeos.length) {
+    const mesh = new THREE.Mesh(mergeGeometries(monGlowBugGeos, false),
+      new THREE.MeshBasicMaterial({ color: monGlow.bug, toneMapped: false }));
+    mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+    for (const g of monGlowBugGeos) g.dispose();
+    group.add(mesh);
+  }
+
+  // Signs (CanvasTexture planes on wall faces) — their own materials, added last.
+  for (let i = 0; i < signs.length; i++) group.add(signs[i]);
 
   // Lighting: flat + honest — hemisphere fill + ONE shadow-casting sun (≤1, I3).
   // READABILITY LIFT (release polish): raised above the test room's 1.6/2.4 to
@@ -389,6 +641,26 @@ export function buildProdMap() {
   // sealed far walls. (testRoom used 30→90; this map is bigger.)
   const fog = new THREE.Fog(0x1c2433, 34, 120);
 
+  // Blink hook: pulse the two shared LED emissive materials in soft-antiphase so
+  // the rack farm reads "alive". Zero-alloc, no setTimeout — ticks on game dt
+  // (B6); main.js calls map.update(dt) per frame (guarded). ~zero cost: two
+  // scalar sin() + two color .setScalar-style writes on cached base colors.
+  let _ledPhase = 0;
+  const _tealBase = new THREE.Color(LED_TEAL);
+  const _amberBase = new THREE.Color(LED_AMBER);
+  const _ventBase = new THREE.Color(0x2c8fb0);
+  function update(dt) {
+    _ledPhase += dt;
+    // Two rack-LED blink rates, antiphased — a busy-server flicker; plus a slow
+    // vent "breathe" — all off cached base colors, zero per-frame allocation.
+    const tealK = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(_ledPhase * 3.1));
+    const amberK = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(_ledPhase * 2.3 + 1.7));
+    const ventK = 0.5 + 0.5 * (0.5 + 0.5 * Math.sin(_ledPhase * 0.9)); // slow HVAC breathe
+    ledTealMat.color.copy(_tealBase).multiplyScalar(tealK);
+    ledAmberMat.color.copy(_amberBase).multiplyScalar(amberK);
+    ventMat.color.copy(_ventBase).multiplyScalar(ventK);
+  }
+
   const built = {
     group,
     colliders,
@@ -399,6 +671,7 @@ export function buildProdMap() {
     waypointNodes,
     background,
     fog,
+    update, // visual LED blink; main.js calls it per frame (see main.js guard)
   };
 
   // DEV authoring insurance — never runs in prod (tree-shaken by the guard).

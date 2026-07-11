@@ -447,6 +447,22 @@ Every phase passed a browser gate. The gates earned their keep — each caught s
 
 ---
 
+## 8B. v1.2 — The "Shoots" map (cloned from Rohit's 3D model), Verticality, ADS
+
+*(Planned 2026-07-12 from Rohit's asks: clone `3d_models/maps/development/ar_shoots.fbx` as the map; climbable stairs/elevated positions you can fight from; right-click ADS.)*
+
+**The model:** a Source-engine export (1,847 meshes, ~500k tris, `worldspawn_*` brushes + `prop_static_*`), i.e. box-brush geometry in Source units (≈0.0254 m/unit) — near-ideal for our AABB world. We do NOT import its meshes (perf + style pillars stand); we **extract its layout programmatically and rebuild it in our primitive+collider format**. Fidelity target: recognizable layout/proportions/routes, our palette.
+
+**Workstreams (strictly serial merges, browser gate + commit each):**
+1. **Geometry intake** (lead): chunked FBX inventory dump → cluster Y-levels into floor plates, classify thin-tall boxes as walls, detect stair runs (ascending small-box sequences), find the central elevated structure; emit `reference/shoots-layout.json` + scale calibration (player height vs Source 72 units). Skybox/void filtered by bounds + size heuristics (K20).
+2. **ADS** (agent): RMB hold = aim-down-sights — FOV −Δ (respects the FOV slider, L6), sensitivity × adsSensMult, spread × adsSpreadMult, move speed × adsMoveMult, viewmodel centers, crosshair tightens/fades (L10). Blocked for knife (L8); drops on switch (L4); coexists with reload (fire stays blocked, L3); cancels sprint like fire does (L2); RMB cleared on pause (L5 via A14/E4). Register group L below.
+3. **Verticality tech** (agent): player **step-up** (auto-climb ledges ≤ MOVE.stepHeight 0.4 m when grounded, with headroom check + smoothed eye) and **snap-down** on stair descent; **bot 3D nav** — waypoint nodes gain `y`, links carry slope, the kinematic mover lerps Y along links (bots' floor-lock becomes graph-lock); LOS/aim already 3D. Fall damage stays OFF (config flag exists; the drop from the high spot must remain a viable escape — K12). Register group K below.
+4. **Map build "Shoots"** (agent): rebuild from the layout spec with the Prod decor toolkit; all D-rules + K-rules (stairs as graph edges — every elevated position bot-reachable K7/K16, railings ≤1.05 m K10, headroom K13); the model is not team-symmetric, so spawn zones are chosen for approximate route-timing parity and the imbalance is measured + documented (K19). "Shoots" becomes the DEFAULT map; Prod stays at `?room=prod` (dev) — one map ships, per Rohit.
+
+**New register groups (verticality K, ADS L)** — key entries: K1 step-up only while grounded · K2 headroom check before lift · K3 eye smoothing on step (no camera pop) · K4 grounded snap-down ≤ step height (no stair-bounce) · K5 stair authoring: rise ≤0.4, depth ≥0.28 · K6 bot Y follows graph links; hitboxes already track pos.y · K7 no player-only areas — BFS reachability includes Y · K8 self-check LOS rays at node eye-height · K9 spawn floor-support at spawn Y · K17 Source-scale calibration via player height · K18 non-axis-aligned brushes snapped/approximated, drops logged · L1–L10 as listed in workstream 2.
+
+---
+
 ## 9. The Edge-Case Register
 
 Every known way this game can feel broken, decided *before* it's coded. Each entry: the case → the decision/mitigation → the phase that implements it. Phase checklists reference these groups; when a phase closes, its group gets audited. Rows marked *rule* are authoring/code conventions rather than features.

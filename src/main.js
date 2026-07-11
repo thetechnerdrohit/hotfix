@@ -700,6 +700,11 @@ function boot() {
     // HUD ticks on RAW dt (its markers must not freeze during hit-stop or pause);
     // crosshair bloom reads the live spread each frame (transform-only, G2/G8).
     hud.tick(rawDt, weapons.currentSpreadRad());
+    // Map visual tick (v1.1): the blinking server-rack LED strips. Visual-only,
+    // zero-alloc, no gameplay state — run it EVERY frame on raw dt so the arena
+    // stays alive even behind the menus (charm; § brief). Guarded (test room /
+    // any map without an update hook simply skips).
+    if (room.update) room.update(rawDt);
     renderer.render(scene, cam.camera); // G3: keep rendering under menus
     requestAnimationFrame(frame);
   }
