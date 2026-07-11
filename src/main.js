@@ -15,6 +15,7 @@ import { FpsCamera } from './player/camera.js';
 import { Viewmodel } from './player/viewmodel.js';
 import { buildTestRoom } from './world/testRoom.js';
 import { buildProdMap } from './world/prodMap.js';
+import { buildShootsMap } from './world/shootsMap.js';
 import { buildTargets } from './world/targets.js';
 import { makeGraph } from './world/waypoints.js';
 import { WeaponSystem } from './combat/weapons.js';
@@ -125,10 +126,13 @@ function boot() {
   // default flow (bots on) replaces the dummies with the Phase-3 SE-vs-Bug
   // match. Practice mode keeps the dummy target list + targetFx alive.
   const WANT_BOTS = !(import.meta.env.DEV && params.get('bots') === '0');
-  // Phase 4: the default map is "Prod" (the real data-center arena). The DEV-only
-  // ?room=test flag keeps the Phase-1 feel gym (with its own spawns + waypoint
-  // graph) so ?bots=0 target practice and movement/gunfeel tuning still work.
-  const WANT_TEST_ROOM = import.meta.env.DEV && params.get('room') === 'test';
+  // v1.2: the DEFAULT map is "Shoots" (the ar_shoots clone — verticality capstone).
+  // Prod is demoted to the DEV-only ?room=prod flag; ?room=test keeps the Phase-1
+  // feel gym (its own spawns + waypoint graph) so ?bots=0 practice + tuning work.
+  // One map ships (per Rohit) — no picker, no settings change.
+  const ROOM = import.meta.env.DEV ? params.get('room') : null;
+  const WANT_TEST_ROOM = ROOM === 'test';
+  const WANT_PROD = ROOM === 'prod';
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, PERF.dprCap)); // I4
@@ -141,7 +145,9 @@ function boot() {
   // The MAP owns its palette (Phase 4): build*() returns background + fog so a
   // map can tune its own look (Prod's fog far-plane is set to keep the 28 m
   // A-lane sightline visible — fog must never hide a balanced sightline).
-  const room = WANT_TEST_ROOM ? buildTestRoom() : buildProdMap();
+  const room = WANT_TEST_ROOM ? buildTestRoom()
+    : WANT_PROD ? buildProdMap()
+    : buildShootsMap();
 
   const scene = new THREE.Scene();
   scene.background = room.background;

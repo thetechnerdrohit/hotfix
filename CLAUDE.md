@@ -14,7 +14,9 @@ Persistent context for this project. Full design + roadmap lives in **`BUILD-PLA
 - Phase order: `0`✅ → `1`✅ → `2`✅ → `3`✅ → `4`✅ → **release polish ✅** → `5` Multiplayer *(the mountain — deliberately unbuilt; separate decision + hosting cost, see plan §5/§8)*.
 - The plan carries: §4B moment-to-moment FPS spec, §4C config schema, §4D open decisions w/ defaults, §9 edge-case register (~105 entries) — read those before any further work.
 - **Build pattern (per Rohit):** implementation runs as role-split Opus 4.8 max-effort agents — systems/backend → presentation/frontend → independent review — lead defines contracts up front, merges STRICTLY SERIALLY (two agents on the tree = collision; it happened twice), and browser-gates every merge: agents don't boot the page, and the two worst bugs (wrapper-vs-inner camera crash; visual-only floor dropping the player out of the world) were only catchable there.
-- Dev URL params (dev builds only): `?room=test` (Phase-1 feel gym) · `?bots=0` (Phase-2 dummy practice) · `?nolock=1` (headless testing, exposes `window.__game`).
+- **v1.1–v1.2 (2026-07-12):** character/viewmodel visual overhaul (procedural animation, hitboxes frozen) · Prod set-dressed (LEDs/signage/clutter, colliders byte-identical) · **right-click ADS** (group L) · **verticality** — player step-up/snap-down + bot 3D nav (group K) · **"Shoots"** — the default map, cloned from Rohit's `ar_shoots.fbx` via layout extraction (`reference/shoots-layout.json`): central paired decks (2.63 m) with terraced climbable roofs + catwalk, corner buildings + stairs, point-symmetric spawns. All browser-gated; combat regressions checked at every merge.
+- Feel-pass flags for Rohit: bots climb but don't *favor* high ground (patrol weighting knob), and roof-vs-ground balance needs human judgment.
+- Dev URL params (dev builds only): `?room=test` (feel gym + verticality fixture) · `?room=prod` (the old Prod arena) · `?bots=0` (dummy practice) · `?nolock=1` (headless testing, exposes `window.__game`).
 
 ## Tech stack (settled decisions — don't re-litigate without a reason)
 - **Rendering:** Three.js (WebGL), low-poly primitives. No art pipeline yet.
