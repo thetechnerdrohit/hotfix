@@ -52,17 +52,22 @@ import { CharAnim } from './charAnim.js';
 // built from primitives, but the HITBOXES ARE FROZEN — the extra meshes are pure
 // cosmetic children; nothing here changes BODY/HEAD_CENTER_Y or _refreshHitboxes.
 // Bug = team-red / sickly family; SE = teal/slate family (stay in prodMap PALETTE).
-const BUG_THORAX = 0x35202a;   // front segment (a touch warmer/redder)
-const BUG_ABDOMEN = 0x281820;  // rear segment (darker, sickly)
-const BUG_LEG = 0x160f14;      // near-black articulated leg stubs
-const BUG_ANTENNA = 0x4a2630;  // dull red antennae
-const BUG_HEAD_BG = '#2a0508'; // error-label badge plate (darker red terminal tag)
-const BUG_HEAD_FG = '#ff6f63'; // error-label text (brighter mono — reads as a glowing tag)
-const SE_TORSO = 0x566079;     // slate hoodie (matches the dummy body / prod palette)
-const SE_TORSO_HOOD = 0x455069; // darker two-tone hood/shoulder
-const SE_HEAD = 0x6b7690;      // head block (lighter slate)
-const SE_VISOR = 0x3fb89e;     // teal visor/face hint (SE identity)
-const SE_LIMB = 0x3f4860;      // arms/legs (dark slate)
+// v1.4 THEME (Rohit, 2026-07-12): survival-show duality. Opponents read as
+// red-suited masked GUARDS — black mask heads carrying a white ○ △ or □ —
+// and teammates as green TRACKSUIT players with white chest numbers. Style
+// only: hitboxes/colliders/nav are FROZEN (visual meshes swap, hit volumes
+// don't). No third-party names/branding anywhere in shipped text.
+const GUARD_SUIT = 0xc2314e;   // deep pink-red jumpsuit torso
+const GUARD_HOOD = 0x992743;   // darker hood/shoulder cap
+const GUARD_LIMB = 0xa82b45;   // arms/legs, same suit family
+const GUARD_GUN = 0x15151c;    // near-black carried rifle
+const GUARD_MASK = 0x101014;   // black mask head block (the hit zone visual)
+const BUG_LABEL_BG = '#2a0508'; // error-label name tag plate (kept — HOTFIX identity)
+const BUG_LABEL_FG = '#ff6f63';
+const SE_TORSO = 0x2f9d7f;     // tracksuit green
+const SE_TORSO_HOOD = 0x26816a; // darker green shoulder band
+const SE_HEAD = 0xd8b48f;      // warm skin-tone head block
+const SE_LIMB = 0x27856d;      // tracksuit limbs
 const SE_GUN = 0x232838;       // the little held rifle box (so fights read)
 const SE_LABEL_BG = '#12303a';
 const SE_LABEL_FG = '#9fe8d6';
@@ -262,74 +267,130 @@ export class Bot {
   // `bodyMesh`/`headMesh`/`_nameLabel` keep their meaning for the combat/FX
   // contract (bodyMesh = primary torso, headMesh = head/badge at the hitbox).
 
+  // v1.4: Bug bots are humanoid GUARDS — red jumpsuit, black mask head with a
+  // white ○/△/□ (stable per bot), carried rifle. The mask block occupies the
+  // head slot (visual only; the hit sphere still comes from _refreshHitboxes).
+  // Their error-label NAME survives as a small tag above the mask.
   _buildBug() {
     const bob = new THREE.Group();
     this.group.add(bob);
     this._bobGroup = bob;
     const tintMats = [];
-    const legs = [], antennae = [];
+    const legs = [], arms = [];
 
-    // Two-segment body: thorax (front, larger) + abdomen (rear, tapered). Their
-    // combined footprint reads as the squat bug body; bodyMesh = the thorax
-    // (primary torso, the tint anchor). Slightly different tones per the brief.
-    const thoraxMat = new THREE.MeshLambertMaterial({ color: BUG_THORAX });
-    const thorax = new THREE.Mesh(new THREE.BoxGeometry(BODY.x, BODY.y * 0.62, BODY.z * 1.05), thoraxMat);
-    thorax.position.set(0, BODY.y * 0.42, -BODY.z * 0.18); // front-heavy
-    thorax.castShadow = PERF.shadows;
-    bob.add(thorax);
-    this.bodyMesh = thorax;
-    tintMats.push(thoraxMat);
+    // Jumpsuit torso + darker hood cap (same humanoid frame as the SE build —
+    // both silhouettes fill the identical frozen body box).
+    const torsoMat = new THREE.MeshLambertMaterial({ color: GUARD_SUIT });
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(BODY.x, BODY.y * 0.55, BODY.z), torsoMat);
+    torso.position.y = BODY.y * 0.58;
+    torso.castShadow = PERF.shadows;
+    bob.add(torso);
+    this.bodyMesh = torso;
+    tintMats.push(torsoMat);
 
-    const abdoMat = new THREE.MeshLambertMaterial({ color: BUG_ABDOMEN });
-    const abdomen = new THREE.Mesh(new THREE.BoxGeometry(BODY.x * 0.82, BODY.y * 0.5, BODY.z * 0.95), abdoMat);
-    abdomen.position.set(0, BODY.y * 0.3, BODY.z * 0.55); // sits behind + lower
-    abdomen.castShadow = PERF.shadows;
-    bob.add(abdomen);
-    tintMats.push(abdoMat);
+    const hoodMat = new THREE.MeshLambertMaterial({ color: GUARD_HOOD });
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(BODY.x * 1.02, BODY.y * 0.18, BODY.z * 1.04), hoodMat);
+    hood.position.y = BODY.y * 0.82;
+    hood.castShadow = PERF.shadows;
+    bob.add(hood);
+    tintMats.push(hoodMat);
 
-    // Four articulated leg stubs (two per side), each pivoting from a hip nub
-    // near the thorax. The animator swings them in alternating pairs (a skitter).
-    // Each leg is a child Group so rotation.x pivots from the hip, not the mesh
-    // centre. (4 legs keeps the per-bot mesh count ≤10 — draw-call budget I6.)
-    const legMat = new THREE.MeshLambertMaterial({ color: BUG_LEG });
-    tintMats.push(legMat);
-    const legGeo = new THREE.BoxGeometry(0.07, 0.05, 0.26);
-    const hipX = BODY.x / 2 - 0.02;
-    for (let i = 0; i < 4; i++) {
-      const side = i < 2 ? -1 : 1;
-      const row = i % 2;                       // 0 front, 1 rear
+    // BLACK MASK head at the hit zone. Lambert (in the tint list) so hits flash
+    // on the mask too; the white shape rides on a Basic plane so it stays crisp.
+    const maskMat = new THREE.MeshLambertMaterial({ color: GUARD_MASK });
+    const mask = new THREE.Mesh(new THREE.BoxGeometry(HEAD_EDGE, HEAD_EDGE, HEAD_EDGE), maskMat);
+    mask.position.y = HEAD_CENTER_Y;
+    mask.castShadow = PERF.shadows;
+    bob.add(mask);
+    this.headMesh = mask;
+    tintMats.push(maskMat);
+
+    const shape = new THREE.Mesh(
+      new THREE.PlaneGeometry(HEAD_EDGE * 0.72, HEAD_EDGE * 0.72),
+      new THREE.MeshBasicMaterial({ map: this._maskShapeTexture(this._animIndex % 3), transparent: true }),
+    );
+    shape.position.set(0, HEAD_CENTER_Y, -HEAD_EDGE / 2 - 0.006); // front face (−z = facing)
+    shape.rotation.y = Math.PI; // plane faces −z
+    bob.add(shape);
+
+    // Legs + arms in the shared held-rifle pose; the animator walk-swings them.
+    const limbMat = new THREE.MeshLambertMaterial({ color: GUARD_LIMB });
+    tintMats.push(limbMat);
+    const legGeo = new THREE.BoxGeometry(0.17, BODY.y * 0.42, BODY.z * 0.9);
+    for (let i = 0; i < 2; i++) {
       const hip = new THREE.Group();
-      hip.position.set(side * hipX, 0.17, (row === 0 ? -1 : 1) * BODY.z * 0.35);
-      const leg = new THREE.Mesh(legGeo, legMat);
-      leg.position.set(side * 0.11, -0.06, 0); // splay out + down from the hip
-      leg.rotation.z = side * 0.5;
+      hip.position.set((i === 0 ? -1 : 1) * BODY.x * 0.24, BODY.y * 0.32, 0);
+      const leg = new THREE.Mesh(legGeo, limbMat);
+      leg.position.y = -BODY.y * 0.2;
       leg.castShadow = PERF.shadows;
       hip.add(leg);
       bob.add(hip);
-      legs.push(hip); // animate the HIP pivot (rotation.x)
+      legs.push(hip);
     }
-
-    // Two short antennae off the front, above the badge.
-    const antMat = new THREE.MeshLambertMaterial({ color: BUG_ANTENNA });
-    tintMats.push(antMat);
-    const antGeo = new THREE.BoxGeometry(0.03, 0.22, 0.03);
+    const armGeo = new THREE.BoxGeometry(0.11, BODY.y * 0.4, 0.13);
     for (let i = 0; i < 2; i++) {
-      const base = new THREE.Group();
-      base.position.set((i === 0 ? -1 : 1) * 0.1, HEAD_CENTER_Y + HEAD_EDGE * 0.4, -BODY.z * 0.35);
-      const ant = new THREE.Mesh(antGeo, antMat);
-      ant.position.y = 0.11;
-      ant.rotation.x = -0.35; // lean forward
-      base.add(ant);
-      bob.add(base);
-      antennae.push(base);
+      const side = i === 0 ? -1 : 1;
+      const shoulder = new THREE.Group();
+      shoulder.position.set(side * (BODY.x / 2 + 0.02), BODY.y * 0.72, 0);
+      shoulder.rotation.x = -0.5;
+      const arm = new THREE.Mesh(armGeo, limbMat);
+      arm.position.y = -BODY.y * 0.18;
+      arm.castShadow = PERF.shadows;
+      shoulder.add(arm);
+      bob.add(shoulder);
+      arms.push(shoulder);
     }
+    const gun = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 0.09, 0.5),
+      new THREE.MeshLambertMaterial({ color: GUARD_GUN }),
+    );
+    gun.position.set(-BODY.x * 0.28, -BODY.y * 0.34, -0.2);
+    arms[1].add(gun);
+    tintMats.push(gun.material);
 
-    // Error-label head badge — the label IS the head hitbox. Glowing terminal tag.
-    this._buildLabelHead(BUG_HEAD_BG, BUG_HEAD_FG, bob);
+    // Error-label name tag above the mask (kept: the HOTFIX identity).
+    this._buildNameLabel(BUG_LABEL_BG, BUG_LABEL_FG, HEAD_CENTER_Y + HEAD_EDGE / 2 + 0.14, bob);
 
-    this.anim = new CharAnim('bug', {
-      legs, antennae, bobGroup: bob, tintMats,
+    // Humanoid rig → the 'se' walk-swing branch of the animator.
+    this.anim = new CharAnim('se', {
+      legs, arms, bobGroup: bob, tintMats,
     }, this._animIndex);
+  }
+
+  // White number plate on transparency (tracksuit chest patch). Built once.
+  _numberTexture(text) {
+    const c = document.createElement('canvas');
+    c.width = 128; c.height = 76;
+    const x = c.getContext('2d');
+    x.fillStyle = '#eef1f6';
+    x.fillRect(0, 0, 128, 76);
+    x.fillStyle = '#10231e';
+    x.font = 'bold 52px ui-monospace, Menlo, monospace';
+    x.textAlign = 'center';
+    x.textBaseline = 'middle';
+    x.fillText(text, 64, 40);
+    return new THREE.CanvasTexture(c);
+  }
+
+  // White ○ / △ / □ on transparency — one small CanvasTexture per bot, built
+  // once at construction (never per frame).
+  _maskShapeTexture(which) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const x = c.getContext('2d');
+    x.strokeStyle = '#f2f4f8';
+    x.lineWidth = 11;
+    x.lineJoin = 'round';
+    if (which === 0) {
+      x.beginPath(); x.arc(64, 64, 40, 0, Math.PI * 2); x.stroke();
+    } else if (which === 1) {
+      x.beginPath(); x.moveTo(64, 20); x.lineTo(106, 100); x.lineTo(22, 100); x.closePath(); x.stroke();
+    } else {
+      x.strokeRect(26, 26, 76, 76);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.anisotropy = 2;
+    return tex;
   }
 
   _buildSe() {
@@ -368,12 +429,16 @@ export class Bot {
     this.headMesh = head;
     tintMats.push(headMat);
 
-    const visor = new THREE.Mesh(
-      new THREE.BoxGeometry(HEAD_EDGE * 0.86, HEAD_EDGE * 0.32, 0.03),
-      new THREE.MeshBasicMaterial({ color: SE_VISOR }), // basic: the visor stays lit/legible
+    // v1.4: white CHEST NUMBER patch (tracksuit-player identity) — replaces the
+    // old teal visor. Stable 3-digit number per bot; Basic-lit so it stays crisp.
+    const num = String(((this._animIndex * 111) % 455) + 1).padStart(3, '0');
+    const patch = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.2, 0.12),
+      new THREE.MeshBasicMaterial({ map: this._numberTexture(num), transparent: true }),
     );
-    visor.position.set(0, HEAD_CENTER_Y + 0.02, -HEAD_EDGE / 2 - 0.005);
-    bob.add(visor);
+    patch.position.set(0, BODY.y * 0.62, -BODY.z / 2 - 0.006); // torso front (−z = facing)
+    patch.rotation.y = Math.PI;
+    bob.add(patch);
 
     // Two legs (pivot from the hip, filling the lower body box) that walk-swing.
     const limbMat = new THREE.MeshLambertMaterial({ color: SE_LIMB });

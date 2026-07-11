@@ -139,7 +139,7 @@ const PALETTE = {
   propB:     0x7d5f2c,  // props (darker) — alternates for readability
   berm:      0x6b5f42,  // added sealing berm
   seAccent:  0x37b39a,  // SE end trim (teal)
-  bugAccent: 0xdf7631,  // Bug end trim (orange)
+  bugAccent: 0xd23a52,  // Bug end trim (guard pink-red, v1.4 theme)
 };
 
 const LED_TEAL = 0x37e0c2;

@@ -124,15 +124,23 @@ export class Viewmodel {
   }
 
   _buildKnife() {
+    // v1.4 (Rohit): the knife must READ as a held knife, not a shouldered gun.
+    // All parts live in an inner `pose` group canted like a fist grip — blade
+    // longer, angled up-and-across the view; the outer group keeps receiving
+    // the shared anim transforms (raise/sway/swing) untouched.
     const g = new THREE.Group();
-    g.add(box(0.032, 0.10, 0.07, 0, -0.06, 0.04, 0x2a3040));  // handle
-    g.add(box(0.06, 0.02, 0.04, 0, -0.01, -0.02, 0x1b2030));  // guard (crossbar)
-    g.add(box(0.026, 0.05, 0.24, 0, 0.0, -0.14, 0xcdd6e6));   // blade spine (bright)
-    g.add(box(0.006, 0.052, 0.24, 0.014, 0.0, -0.14, 0xeef3fb)); // edge bevel (brighter)
-    addHands(g, CHARACTER.handColorKnife, 0.0, -0.1, 0.08, 0.02);
+    const pose = new THREE.Group();
+    pose.position.set(-0.05, 0.03, 0.02);
+    pose.rotation.set(0.22, -0.35, -0.55); // tip up, angled inward, canted grip
+    g.add(pose);
+    pose.add(box(0.036, 0.12, 0.07, 0, -0.07, 0.05, 0x2a3040));  // handle (in the fist)
+    pose.add(box(0.07, 0.022, 0.045, 0, -0.005, 0.0, 0x1b2030)); // guard (crossbar)
+    pose.add(box(0.028, 0.055, 0.34, 0, 0.0, -0.17, 0xcdd6e6));  // blade spine (longer)
+    pose.add(box(0.006, 0.058, 0.34, 0.015, 0.0, -0.17, 0xeef3fb)); // edge bevel
+    addHands(pose, CHARACTER.handColorKnife, 0.0, -0.09, 0.07, 0.02);
     const muzzle = new THREE.Object3D(); // "muzzle" = blade tip (flash anchor; tracer n/a)
-    muzzle.position.set(0, 0.0, -0.28); // UNCHANGED (FX contract)
-    g.add(muzzle);
+    muzzle.position.set(0, 0.0, -0.36); // rides the posed blade tip
+    pose.add(muzzle);
     return { group: g, muzzle };
   }
 

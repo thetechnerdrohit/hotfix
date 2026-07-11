@@ -310,8 +310,8 @@ export const FX = {
   splatDecalSize: 1.1,    // m edge of the flat floor splat
   splatDecalLife: 8.0,    // s before a floor splat fades out
   // Team palettes (§4B: bugs sickly green/dark, SEs teal/slate).
-  splatBugColor: 0x6fae3a,   // sickly green — a squashed bug
-  splatBugDecalColor: 0x24401a, // dark green floor stain
+  splatBugColor: 0xd23a52,   // guard-red burst (v1.4 theme)
+  splatBugDecalColor: 0x3a0f1a, // dark red floor stain
   splatSeColor: 0x3fb89e,    // teal (SE identity)
   splatSeDecalColor: 0x1c3a44,  // dark slate/teal floor stain
 };
@@ -398,7 +398,7 @@ export const CROSSHAIR = {
 // ---------------------------------------------------------------------------
 export const HUD = {
   seColor: '#3fb89e',    // SE team tint (teal) — matches the SE head block
-  bugColor: '#ff5a4d',   // Bug team tint (hot red) — matches the error-label badge
+  bugColor: '#ef4d72',   // Bug team tint — guard pink-red (v1.4 theme)
   neutralColor: '#8b94a7', // dim/neutral (separators, drawn state)
   killFeedMax: 4,        // last N kill-feed rows kept (G7 — bounded, pooled, fading)
   killFeedRowMs: 4200,   // s×1000 a kill-feed row stays fully lit before it fades out
