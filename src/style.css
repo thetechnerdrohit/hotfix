@@ -1,0 +1,566 @@
+:root {
+  --bg: #0d1117;
+  --panel: #10141cf2;
+  --border: #2a3242;
+  --text: #dbe2f0;
+  --dim: #8b94a7;
+  --accent: #2fbfa4;
+  --accent-hi: #3ee0c2;
+  --warn: #ffd166;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ---- HUD (DOM overlay — G1; per-frame changes limited to transform/opacity — G2) ---- */
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Crosshair container: centred, non-interactive. Holds the dot, 4 gap lines
+   (translated per-frame by JS via transform only — G2/G8), and the hitmarker. */
+#crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+
+#ch-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: #eaf1ff;
+  box-shadow: 0 0 0 1px rgba(10, 12, 18, 0.7);
+}
+
+/* Thin gap lines — size-capped, never a blob (G8). JS pushes each outward from
+   centre with transform; the base transform sits them flush against the dot. */
+.ch-line {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: #eaf1ff;
+  box-shadow: 0 0 0 1px rgba(10, 12, 18, 0.55);
+  will-change: transform;
+}
+.ch-v { width: 2px; height: 7px; }   /* vertical lines (up/down) */
+.ch-h { width: 7px; height: 2px; }   /* horizontal lines (left/right) */
+/* Rest positions (JS adds the bloom gap on top of these via transform). */
+#ch-up    { transform: translate(-50%, -100%); }
+#ch-down  { transform: translate(-50%, 0); }
+#ch-left  { transform: translate(-100%, -50%); }
+#ch-right { transform: translate(0, -50%); }
+
+/* Hitmarker / kill-X — hidden until a hit; JS drives opacity + scale (G2). */
+#hitmarker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 700;
+  color: #ffffff;
+  opacity: 0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  will-change: opacity, transform;
+}
+
+/* Ammo block, bottom-right. Text updates only on events (G2); the low-ammo
+   pulse + dry-fire flash ride an opacity var driven per-frame by JS. */
+#ammo {
+  --flash: 0;
+  position: absolute;
+  right: 26px;
+  bottom: 22px;
+  text-align: right;
+  user-select: none;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+}
+#weapon-chip {
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: var(--dim);
+  margin-bottom: 2px;
+}
+#ammo-counts {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text);
+}
+#ammo-mag { color: #eaf1ff; }
+#ammo-sep { color: var(--dim); margin: 0 4px; font-weight: 400; }
+#ammo-res { font-size: 22px; color: var(--dim); }
+
+/* Dry-fire flash: JS raises --flash (0→1→0). Tint the mag warm on the pulse. */
+#ammo-mag { text-shadow: 0 0 calc(var(--flash) * 14px) rgba(255, 209, 102, calc(var(--flash) * 0.9)); }
+
+/* Low ammo: a persistent amber pulse on the block (also flag-driven, G6). */
+#ammo.low #ammo-mag { color: var(--warn); animation: ammo-low 0.9s ease-in-out infinite; }
+@keyframes ammo-low { 50% { opacity: 0.35; } }
+
+#fps {
+  position: absolute;
+  top: 10px;
+  left: 12px; /* top-right belongs to the dev tuner panel */
+  font-size: 12px;
+  color: var(--dim);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- Menus ---- */
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 15, 0.62);
+  user-select: none;
+}
+
+#overlay.hidden { display: none; }
+
+.panel {
+  width: min(440px, 92vw);
+  padding: 32px 36px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  text-align: center;
+}
+
+.panel.hidden { display: none; }
+
+.panel h1 {
+  margin: 0 0 6px;
+  font-size: 44px;
+  letter-spacing: 6px;
+  color: var(--accent-hi);
+}
+
+.panel h2 { margin: 0 0 18px; letter-spacing: 2px; }
+
+.cursor { animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+.tagline {
+  margin: 0 0 24px;
+  font-size: 13px;
+  color: var(--dim);
+  line-height: 1.5;
+}
+
+button.primary {
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: 1px;
+  padding: 12px 34px;
+  color: #06120f;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+button.primary:hover { background: var(--accent-hi); }
+
+.hint {
+  min-height: 1.3em;
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+table.controls {
+  margin: 22px auto 0;
+  border-collapse: collapse;
+  font-size: 12px;
+  color: var(--dim);
+}
+table.controls td { padding: 3px 10px; text-align: left; }
+table.controls td:first-child {
+  color: var(--text);
+  background: #1a2130;
+  border-radius: 5px;
+  text-align: center;
+}
+
+.panel label { display: block; margin: 0 0 18px; text-align: left; font-size: 13px; }
+.label-row { display: flex; justify-content: space-between; margin-bottom: 6px; color: var(--dim); }
+.label-row span { color: var(--text); }
+.panel input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+/* ---- Start-panel options (difficulty segmented + Fast toggle). Same accent
+   language as the sliders; interactive (the overlay is pointer-events default). */
+#start-options {
+  margin: 20px 0 4px;
+  padding: 16px 0 4px;
+  border-top: 1px solid var(--border);
+}
+.opt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 4px;
+}
+.opt-row + .opt-hint { margin-top: 0; }
+.opt-label { font-size: 13px; color: var(--text); text-align: left; }
+.opt-sub { color: var(--dim); font-size: 11px; letter-spacing: 0; }
+.opt-hint {
+  min-height: 1.1em;
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--warn);
+  text-align: left;
+}
+
+/* Segmented difficulty buttons — a pill group; the active one carries the accent. */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #161c28;
+}
+.seg-btn {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  padding: 7px 14px;
+  color: var(--dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn:hover { color: var(--text); background: #1a2130; }
+.seg-btn.active {
+  color: #06120f;
+  background: var(--accent);
+  font-weight: 700;
+}
+.seg-btn.active:hover { background: var(--accent-hi); }
+
+/* Fast toggle switch — a slider knob, accent when on. role="switch" + aria-checked. */
+.toggle {
+  --on: 0;
+  position: relative;
+  width: 44px;
+  height: 24px;
+  padding: 0;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #161c28;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.toggle[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #dbe2f0;
+  transition: transform 0.15s ease;
+}
+.toggle[aria-checked="true"] .toggle-knob { transform: translateX(20px); background: #06120f; }
+
+/* Inline "apply & reload" affordance inside the Fast hint (an explicit user
+   click — the only place a reload is offered). Looks like a link, not a button. */
+.link-inline {
+  font: inherit;
+  font-size: 11px;
+  padding: 0;
+  color: var(--accent-hi);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.link-inline:hover { color: var(--accent); }
+
+/* ==========================================================================
+   PHASE 3 — danger stack, low-hp stack, match HUD, death/victory overlays.
+   Everything in #hud is pointer-events:none and driven per-frame by JS via
+   transform/opacity only (G2). Colours use JS-set CSS vars where they're
+   team-dependent so JS never touches layout.
+   ========================================================================== */
+
+/* ---- Hurt vignette (getting shot): a red radial edge pulse, alpha-capped so
+   stacked hits never white-out (F8). JS writes --hurt (0..cap) each frame. ---- */
+#hurt-vignette {
+  --hurt: 0;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--hurt);
+  background: radial-gradient(ellipse at center,
+    rgba(255, 40, 30, 0) 42%,
+    rgba(255, 30, 22, 0.55) 82%,
+    rgba(180, 12, 8, 0.9) 100%);
+  will-change: opacity;
+}
+
+/* ---- Low-hp persistent red edge vignette (escalating stack). JS writes --lowhp
+   (steady alpha from observed hp) and --lowhp-pulse-scale (a per-frame pulse
+   multiplier). Distinct deeper-red gradient from the hurt flash. ---- */
+#lowhp-vignette {
+  --lowhp: 0;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--lowhp);
+  background: radial-gradient(ellipse at center,
+    rgba(140, 0, 0, 0) 46%,
+    rgba(170, 6, 6, 0.5) 84%,
+    rgba(120, 0, 0, 0.92) 100%);
+  will-change: opacity;
+}
+
+/* ---- Directional damage wedges (F7): a pool of 4 around the crosshair. Each
+   is a triangle pointing OUTWARD at the top, rotated about the crosshair centre
+   by JS (transform: rotate only) so it points at the damage source, and faded
+   via opacity. The wedge sits at a radius via a translate baked into transform. */
+#danger-wedges {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.danger-wedge {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;      /* centre the box on the crosshair */
+  opacity: 0;
+  /* An outward-pointing chevron drawn with borders: a triangle whose tip points
+     up (−Y, toward the source when rotate()=0). JS sets rotate() + a Y offset
+     via the CSS var --r (px radius) folded into transform. */
+  transform: rotate(0deg) translateY(-78px);
+  transform-origin: 50% 50%;
+  will-change: transform, opacity;
+}
+.danger-wedge::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 13px solid transparent;
+  border-right: 13px solid transparent;
+  border-bottom: 17px solid rgba(255, 60, 48, 0.92);
+  filter: drop-shadow(0 0 3px rgba(255, 40, 30, 0.6));
+}
+
+/* ---- Health block, bottom-left. Number colour + bar fill ramp green→amber→red
+   at the thresholds; JS sets --hp-color and the fill width/opacity-pulse. Text
+   changes only when the integer hp changes (G2). ---- */
+#health {
+  --hp-color: #8fe388;
+  --hp-frac: 1;
+  --hp-pulse: 1;
+  position: absolute;
+  left: 26px;
+  bottom: 22px;
+  user-select: none;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+}
+#health.hidden { display: none; }
+#hp-num {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--hp-color);
+  opacity: var(--hp-pulse);
+}
+#hp-bar {
+  margin-top: 6px;
+  width: 132px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  overflow: hidden;
+}
+#hp-fill {
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  transform: scaleX(var(--hp-frac));  /* transform-only per-frame width (G2) */
+  background: var(--hp-color);
+  will-change: transform;
+}
+
+/* ---- Top-center scoreboard: SE : BUG + clock. Text updates event-driven /
+   at most 1 Hz for the clock (G2). Team colours via JS-set vars. ---- */
+#scoreboard {
+  --se: #3fb89e;
+  --bug: #ff5a4d;
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-weight: 700;
+  user-select: none;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7);
+}
+#scoreboard.hidden { display: none; }
+#scoreboard .score { font-size: 30px; min-width: 42px; text-align: center; }
+#score-se { color: var(--se); }
+#score-bug { color: var(--bug); }
+#score-clock {
+  font-size: 18px;
+  color: var(--text);
+  padding: 4px 12px;
+  background: rgba(10, 14, 22, 0.55);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  letter-spacing: 1px;
+}
+#score-clock.urgent { color: var(--bug); }  /* last 10 s tint (JS toggles) */
+
+/* ---- Kill feed, top-right: last 4 pooled rows, fading (G7). JS creates/reuses
+   .kf-row elements and drives opacity/transform only. ---- */
+#killfeed {
+  position: absolute;
+  right: 16px;
+  top: 46px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  user-select: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  font-size: 13px;
+}
+.kf-row {
+  padding: 2px 8px;
+  background: rgba(10, 14, 22, 0.5);
+  border-radius: 5px;
+  white-space: nowrap;
+  will-change: opacity, transform;
+}
+.kf-row .kf-killer { font-weight: 700; }
+.kf-row .kf-victim { font-weight: 700; }
+.kf-row .kf-weapon { color: var(--dim); margin: 0 6px; }
+.kf-row .kf-head { color: var(--warn); margin-left: 5px; font-weight: 700; }
+
+/* ---- Death / respawn overlay: darken + error-label "TERMINATED" moment +
+   countdown. Non-interactive (inside #hud). JS toggles .hidden + the count. ---- */
+#death-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(40, 4, 4, 0.35), rgba(10, 2, 2, 0.72));
+  pointer-events: none;
+}
+#death-overlay.hidden { display: none; }
+#death-card { text-align: center; }
+#death-title {
+  font-size: 46px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #ff5a4d;
+  text-shadow: 0 0 18px rgba(255, 40, 30, 0.5);
+}
+#death-killer { margin-top: 8px; font-size: 15px; color: var(--dim); }
+#death-killer-name { color: var(--text); font-weight: 700; }
+#death-weapon { color: var(--dim); }
+#death-count { margin-top: 20px; font-size: 14px; color: var(--dim); letter-spacing: 1px; }
+#death-count-num { color: var(--text); font-weight: 700; }
+
+/* ---- Match-end overlay: its OWN interactive layer above the menus. ---- */
+#matchend-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 15, 0.78);
+  user-select: none;
+}
+#matchend-overlay.hidden { display: none; }
+#matchend-card {
+  --verdict: var(--accent-hi);
+  width: min(480px, 92vw);
+  padding: 40px 40px 34px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  text-align: center;
+}
+#matchend-verdict {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  line-height: 1.15;
+  color: var(--verdict);
+  text-shadow: 0 0 22px color-mix(in srgb, var(--verdict) 45%, transparent);
+}
+#matchend-sub { margin-top: 8px; font-size: 13px; color: var(--dim); letter-spacing: 1px; }
+#matchend-score {
+  margin: 22px 0 26px;
+  font-size: 40px;
+  font-weight: 700;
+}
+#me-se { color: var(--accent-hi); }
+#me-bug { color: #ff5a4d; }
+#matchend-score .me-dash { color: var(--dim); margin: 0 10px; font-weight: 400; }
+#matchend-buttons { display: flex; gap: 12px; justify-content: center; }
+button.ghost {
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: 1px;
+  padding: 12px 28px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+button.ghost:hover { background: #1a2130; }

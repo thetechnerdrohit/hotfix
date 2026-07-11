@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <title>HOTFIX — 5 Software Engineers vs. 5 Bugs</title>
+  <meta name="description" content="A fast, low-poly browser FPS: 5 Software Engineers vs. 5 Bugs. Krunker, but you're clearing bugs out of production. Runs in your browser, no install." />
+  <meta name="theme-color" content="#2fbfa4" />
+
+  <!-- Open Graph (self-contained — no external image URL; a link unfurls with
+       title + description, and the page renders its own bug-glyph favicon). -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="HOTFIX — 5 Software Engineers vs. 5 Bugs" />
+  <meta property="og:description" content="A fast, low-poly browser FPS. Krunker, but you're clearing bugs out of production." />
+
+  <!-- Inline SVG data-URI favicon: a simple teal bug glyph (body + head + legs)
+       on the accent colour. Self-contained (no network, no file) so it works
+       under any static host / subpath (J8) and can't 404. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d1117'/%3E%3Cg stroke='%233ee0c2' stroke-width='2' stroke-linecap='round'%3E%3Cline x1='7' y1='13' x2='11' y2='16'/%3E%3Cline x1='7' y1='23' x2='11' y2='20'/%3E%3Cline x1='25' y1='13' x2='21' y2='16'/%3E%3Cline x1='25' y1='23' x2='21' y2='20'/%3E%3Cline x1='16' y1='8' x2='13' y2='11'/%3E%3Cline x1='16' y1='8' x2='19' y2='11'/%3E%3C/g%3E%3Cellipse cx='16' cy='19' rx='6' ry='8' fill='%232fbfa4'/%3E%3Ccircle cx='16' cy='10' r='3.4' fill='%233ee0c2'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <!-- Low-hp red edge vignette (§4B low-health stack). Opacity/animation-speed
+         driven by JS from observed hp; behind the danger vignette. -->
+    <div id="lowhp-vignette"></div>
+    <!-- Hurt vignette (§4B getting-shot). Radial red edge pulse on each hit,
+         alpha-capped (F8). Opacity driven per-frame by JS. -->
+    <div id="hurt-vignette"></div>
+
+    <!-- Directional damage wedges (§4B/F7): a pool of 4 around the crosshair,
+         each rotate()'d every frame toward its (held) source pos, fading. -->
+    <div id="danger-wedges">
+      <div class="danger-wedge"></div>
+      <div class="danger-wedge"></div>
+      <div class="danger-wedge"></div>
+      <div class="danger-wedge"></div>
+    </div>
+
+    <!-- Crosshair: centre dot + 4 thin gap lines that expand with bloom (G8) -->
+    <div id="crosshair">
+      <div id="ch-dot"></div>
+      <div id="ch-up" class="ch-line ch-v"></div>
+      <div id="ch-down" class="ch-line ch-v"></div>
+      <div id="ch-left" class="ch-line ch-h"></div>
+      <div id="ch-right" class="ch-line ch-h"></div>
+      <!-- Hitmarker / kill-X, centred over the crosshair -->
+      <div id="hitmarker">✕</div>
+    </div>
+
+    <!-- Health block, bottom-left (§4B HUD spec): big number + thin bar; colour
+         ramps green→amber→red at the low-hp thresholds. Text updates only when
+         the integer hp changes (G2). Hidden in practice mode (no match). -->
+    <div id="health" class="hidden">
+      <div id="hp-num">100</div>
+      <div id="hp-bar"><div id="hp-fill"></div></div>
+    </div>
+
+    <!-- Ammo block, bottom-right: big mag / reserve + weapon chip (G, G6) -->
+    <div id="ammo">
+      <div id="weapon-chip">RIFLE</div>
+      <div id="ammo-counts">
+        <span id="ammo-mag">30</span><span id="ammo-sep">/</span><span id="ammo-res">90</span>
+      </div>
+    </div>
+
+    <!-- Top-center scoreboard: SE : BUG + clock (Phase 3). Hidden w/o a match. -->
+    <div id="scoreboard" class="hidden">
+      <span id="score-se" class="score">0</span>
+      <span id="score-clock">5:00</span>
+      <span id="score-bug" class="score">0</span>
+    </div>
+
+    <!-- Kill feed, top-right: last 4 rows, fading, pooled (G7). -->
+    <div id="killfeed"></div>
+
+    <!-- Death / respawn overlay (§4B death&respawn: killer + weapon + countdown).
+         Non-interactive: darken + "TERMINATED / by <killer> · <weapon>" + a
+         respawn countdown. Cleared on respawn. -->
+    <div id="death-overlay" class="hidden">
+      <div id="death-card">
+        <div id="death-title">TERMINATED</div>
+        <div id="death-killer">by <span id="death-killer-name">—</span><span id="death-weapon"></span></div>
+        <div id="death-count">respawning in <span id="death-count-num">3</span></div>
+      </div>
+    </div>
+
+    <div id="fps"></div>
+  </div>
+
+  <div id="overlay">
+    <section id="panel-start" class="panel">
+      <h1>HOTFIX<span class="cursor">_</span></h1>
+      <p class="tagline">5 Software Engineers vs. 5 Bugs. You're clearing bugs out of production.</p>
+      <button id="btn-play" class="primary">Enter Prod</button>
+      <p id="hint-start" class="hint"></p>
+
+      <!-- Front-door options — same visual language as the pause sliders. These
+           two persist in settings v2. DIFFICULTY sets BOTS.difficulty (applies on
+           the next match start/restart; a hint shows if a match is mid-flight).
+           GRAPHICS FAST is the Krunker-style preset (shadows off / DPR 1 / halved
+           FX budgets); it's a boot-time preset, so flipping it offers a reload. -->
+      <div id="start-options">
+        <div class="opt-row">
+          <span class="opt-label">Difficulty</span>
+          <div id="difficulty-seg" class="segmented" role="group" aria-label="Difficulty">
+            <button class="seg-btn" data-difficulty="easy">Easy</button>
+            <button class="seg-btn" data-difficulty="normal">Normal</button>
+            <button class="seg-btn" data-difficulty="hard">Hard</button>
+          </div>
+        </div>
+        <p id="difficulty-hint" class="opt-hint"></p>
+
+        <div class="opt-row">
+          <span class="opt-label">Graphics — Fast <span class="opt-sub">(shadows off, faster)</span></span>
+          <button id="fast-toggle" class="toggle" role="switch" aria-checked="false" aria-label="Fast graphics preset">
+            <span class="toggle-knob"></span>
+          </button>
+        </div>
+        <p id="fast-hint" class="opt-hint"></p>
+      </div>
+
+      <table class="controls">
+        <tr><td>W A S D</td><td>move</td></tr>
+        <tr><td>Shift</td><td>sprint</td></tr>
+        <tr><td>Space</td><td>jump</td></tr>
+        <tr><td>Mouse</td><td>look</td></tr>
+        <tr><td>1 2 3</td><td>rifle · pistol · knife</td></tr>
+        <tr><td>R</td><td>reload</td></tr>
+        <tr><td>Esc</td><td>pause / release mouse</td></tr>
+      </table>
+    </section>
+
+    <section id="panel-paused" class="panel hidden">
+      <h2>Paused</h2>
+      <label>
+        <span class="label-row">Sensitivity <span id="sens-val"></span></span>
+        <input id="sens" type="range" min="0.1" max="3" step="0.05" />
+      </label>
+      <label>
+        <span class="label-row">FOV <span id="fov-val"></span></span>
+        <input id="fov" type="range" min="60" max="100" step="1" />
+      </label>
+      <label>
+        <span class="label-row">Volume <span id="vol-val"></span></span>
+        <input id="vol" type="range" min="0" max="1" step="0.01" />
+      </label>
+      <button id="btn-resume" class="primary">Resume</button>
+      <p id="hint-paused" class="hint"></p>
+    </section>
+
+    <section id="panel-unsupported" class="panel hidden">
+      <h2>Browser not supported</h2>
+      <p>HOTFIX needs WebGL and pointer lock. Try a current Chrome, Edge, or Firefox.</p>
+    </section>
+
+    <section id="panel-ctxlost" class="panel hidden">
+      <h2>Graphics context lost</h2>
+      <p>The GPU reset (driver update or overload). Reload to continue.</p>
+      <button class="primary" onclick="location.reload()">Reload</button>
+    </section>
+  </div>
+
+  <!-- Match-end overlay (§4B match end). Its OWN interactive layer (the #hud is
+       pointer-events:none) so PLAY AGAIN / MENU are clickable while unlocked.
+       The verdict theme is set by JS (SE win / Bug win / draw). -->
+  <div id="matchend-overlay" class="hidden">
+    <section id="matchend-card">
+      <div id="matchend-verdict">PROD IS STABLE</div>
+      <div id="matchend-sub"></div>
+      <div id="matchend-score"><span id="me-se">0</span> <span class="me-dash">–</span> <span id="me-bug">0</span></div>
+      <div id="matchend-buttons">
+        <button id="btn-playagain" class="primary">Play again</button>
+        <button id="btn-tomenu" class="ghost">Menu</button>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
