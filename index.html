@@ -108,16 +108,8 @@
            GRAPHICS FAST is the Krunker-style preset (shadows off / DPR 1 / halved
            FX budgets); it's a boot-time preset, so flipping it offers a reload. -->
       <div id="start-options">
-        <div class="opt-row">
-          <span class="opt-label">Difficulty</span>
-          <div id="difficulty-seg" class="segmented" role="group" aria-label="Difficulty">
-            <button class="seg-btn" data-difficulty="easy">Easy</button>
-            <button class="seg-btn" data-difficulty="normal">Normal</button>
-            <button class="seg-btn" data-difficulty="hard">Hard</button>
-          </div>
-        </div>
-        <p id="difficulty-hint" class="opt-hint"></p>
-
+        <!-- v2.4 ONLINE-ONLY: the Difficulty selector is removed — the server
+             owns bot backfill + difficulty; players always join a live match. -->
         <div class="opt-row">
           <span class="opt-label">Graphics — Fast <span class="opt-sub">(shadows off, faster)</span></span>
           <button id="fast-toggle" class="toggle" role="switch" aria-checked="false" aria-label="Fast graphics preset">

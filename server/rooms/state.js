@@ -29,6 +29,10 @@ export class EntitySchema extends Schema {
     this.protectedUntil = 0; // game-time; client can gray-out protected fighters
     this.ackSeq = 0;    // last input seq the server processed FOR this entity
                         // (only meaningful for the client's own entity → reconciliation)
+    this.skin = 0;      // v2.4: appearance seed — the client derives the whole
+                        // randomized kour-style character deterministically from
+                        // (skin, team), so every client renders the SAME body for
+                        // a given fighter with just 2 bytes on the wire.
   }
 }
 defineTypes(EntitySchema, {
@@ -43,6 +47,7 @@ defineTypes(EntitySchema, {
   weapon: 'uint8',
   protectedUntil: 'float32',
   ackSeq: 'uint32',
+  skin: 'uint16',
 });
 
 export class MatchState extends Schema {

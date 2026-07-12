@@ -153,12 +153,13 @@ export class NetClient {
       if (!view) {
         view = { id, name: e.name, team: TEAM_NAME[e.team], isBot: e.isBot,
           pos: new THREE.Vector3(), yaw: 0, hp: 100, dead: false, weapon: 'rifle',
-          protectedUntil: 0, isSelf };
+          protectedUntil: 0, isSelf, skin: e.skin || 0 };
         this.entities.set(id, view);
       }
       view.name = e.name;
       view.team = TEAM_NAME[e.team];
       view.isBot = e.isBot;
+      view.skin = e.skin || 0; // v2.4 appearance seed (AvatarPool derives the body)
       view.hp = e.hp;
       view.dead = e.dead;
       view.weapon = WEAPON_NAME[e.weapon] || 'rifle';

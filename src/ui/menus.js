@@ -41,9 +41,11 @@ export class Menus {
     this.vol.value = settings.volume; // H6 — persisted volume restores here
     this.renderSliderValues();
 
-    // -- Start-panel options (difficulty segmented + Fast toggle) --------------
+    // -- Start-panel options (Fast toggle; difficulty removed v2.4 online-only) -
+    // The difficulty segmented control was removed from the DOM (the server owns
+    // bot difficulty now). Guard every reference so the menu still constructs.
     this.diffSeg = document.getElementById('difficulty-seg');
-    this.diffBtns = Array.from(this.diffSeg.querySelectorAll('.seg-btn'));
+    this.diffBtns = this.diffSeg ? Array.from(this.diffSeg.querySelectorAll('.seg-btn')) : [];
     this.diffHintEl = document.getElementById('difficulty-hint');
     this.fastToggle = document.getElementById('fast-toggle');
     this.fastHintEl = document.getElementById('fast-hint');
@@ -115,7 +117,7 @@ export class Menus {
   // Difficulty hint under the segmented control (main shows "applies next match"
   // when a live match is mid-flight; '' clears it).
   setDifficultyHint(text) {
-    this.diffHintEl.textContent = text || '';
+    if (this.diffHintEl) this.diffHintEl.textContent = text || ''; // removed v2.4 (online-only)
   }
 
   // Fast-preset hint. When `onReload` is provided, append a one-click "apply &

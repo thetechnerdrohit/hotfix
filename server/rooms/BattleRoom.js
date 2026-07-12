@@ -153,6 +153,7 @@ export class BattleRoom extends Room {
       e.weapon = this._weaponIdOf(c);
       e.protectedUntil = c.protectedUntil || 0;
       e.ackSeq = isBot ? 0 : (s.human ? s.human.lastAckSeq : 0);
+      e.skin = c.skin || 0; // v2.4 appearance seed (client derives the body)
     }
     if (full) {
       // Remove any stale entries (id changed on a human↔bot swap → both ids stay,

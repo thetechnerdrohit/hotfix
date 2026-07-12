@@ -141,7 +141,11 @@ function boot() {
   // quick-match into an open room, humans replace bots (dynamic joining). The
   // local Match is NOT built; the server owns all entities/scoring. Offline
   // single-player stays byte-identical without the flag.
-  const ONLINE = params.has('online');
+  // v2.4: HOTFIX is ONLINE-ONLY now (Rohit). Play always joins the authoritative
+  // Colyseus server — there is no local single-player match anymore. The old
+  // ?online flag is implied; the local Match path below is gone. The server owns
+  // all entities, scoring, and bot backfill so a room is never empty.
+  const ONLINE = true;
   const SERVER_URL = params.get('server') || `ws://${location.hostname}:2567`;
   // v1.2: the DEFAULT map is "Shoots" (the ar_shoots clone — verticality capstone).
   // Prod is demoted to the DEV-only ?room=prod flag; ?room=test keeps the Phase-1
@@ -225,33 +229,16 @@ function boot() {
   };
 
   // ==========================================================================
-  // PHASE 3 — the match: bot teams + the player as a damageable combatant + TDM.
-  // The player entity wraps the controller so bots can see/kill it; the match
-  // owns the roster, spawns, scoring, respawns, and the stable target/collider
-  // arrays. Built only when WANT_BOTS (the default); ?bots=0 keeps the Phase-2
-  // dummy practice with no match. Match EVENTS (onKillFeed/onPlayerDeath/…) are
-  // left UNASSIGNED — the frontend agent wires them; here we only do the
-  // functional plumbing (target list, colliders, input gate, the tick).
+  // v2.4 ONLINE-ONLY: there is no local Match anymore. The authoritative server
+  // owns the roster, scoring, respawns, and bot backfill; the client predicts
+  // the local player and renders remote fighters from the wire (see the ONLINE
+  // block below). `match` stays null forever — the `if (match)` guards that used
+  // to wire single-player presentation are now dead paths kept only so the loop
+  // structure is uniform. `playerEntity` is likewise unused online (the server
+  // is the damage authority; the client sends intent + reconciles).
   // ==========================================================================
-  let match = null;
-  let playerEntity = null;
-  if (WANT_BOTS && !ONLINE) {
-    const graph = makeGraph(room.waypointNodes); // the ACTIVE map's node graph (prod or test)
-    playerEntity = new PlayerEntity(1, player, weapons, cam);
-    weapons.owner = playerEntity; // kill credit + directional-danger source pos
-    // The map owns the team spawns (feet pos + facing yaw); pass them in so the
-    // match is map-agnostic (Phase-4 plumbing — no hard-coded spawn arrays).
-    match = new Match(playerEntity, weapons, graph, scene, room.colliders,
-      { seSpawns: room.seSpawns, bugSpawns: room.bugSpawns });
-    // Repoint ONLY the weapon's target list at the match's stable, maintained-
-    // in-place enemy array (WeaponSystem reads it fresh each shot). The player's
-    // bullets hit bots through this TARGET list (head-sphere + body), so bots do
-    // NOT belong in weapons.world — that stays the STATIC room geometry, exactly
-    // as in Phase 2, or bot bodies would double as bullet-blocking walls. The
-    // bots-as-obstacles physicality is a MOVEMENT concern only: PlayerController
-    // gets match.dynamicColliders (statics + living-bot AABBs) in the loop.
-    weapons.targets = match.enemiesOfPlayer;
-  }
+  const match = null;
+  const playerEntity = null;
 
   // ==========================================================================
   // PRESENTATION LAYER — audio, FX pools, viewmodel, target reactions, and the
@@ -300,10 +287,11 @@ function boot() {
       matchHud.setScore(net.match.seScore, net.match.bugScore);
     });
   }
-  const botAudioFx = new BotAudioFx(match, audio, 'se'); // positional enemy/ally footsteps
-  // Health block + scoreboard only exist when there's a match (SE-vs-Bug TDM).
-  vitals.setVisible(!!match);
-  matchHud.setVisible(!!match);
+  const botAudioFx = new BotAudioFx(match, audio, 'se'); // positional enemy/ally footsteps (null-safe when match===null)
+  // v2.4 online-only: the match HUD (scoreboard/clock/feed) + low-hp vitals are
+  // ALWAYS on — the server drives them via the ONLINE wiring below.
+  vitals.setVisible(true);
+  matchHud.setVisible(true);
 
   // Hit-stop (feedback ladder item 4, single-player only): a kill briefly scales
   // the SIMULATION dt way down for a chunky freeze. The timer itself counts down
@@ -759,7 +747,8 @@ function boot() {
         net.tick(performance.now()); // advance remote interpolation + rtt ping (contract omission — required)
         avatars.sync(net.entities, net.selfId);
         const selfE = net.entities.get(net.selfId);
-        if (selfE) vitals.tick(selfE.hp, simDt, selfE.dead);
+        if (selfE) vitals.tick(selfE.hp, simDt, selfE.dead); // writes the HP number + bar
+        matchHud.setClock(net.match.clock); // server-driven match clock display
       } else {
       if (alive) player.update(simDt, input, cam.yaw, cols);
       // Weapons tick AFTER the controller so sprint-out suppression (E7) reads

@@ -116,6 +116,7 @@ export class ServerMatch {
    */
   constructor(world, nameSeed = 0x1234abcd) {
     this.world = world;
+    this.seed = nameSeed >>> 0; // v2.4: also seeds appearance (_makeSkin)
     this.graph = world.graph;
     this.staticColliders = world.colliders;
     this.seSpawns = world.seSpawns;
@@ -147,6 +148,13 @@ export class ServerMatch {
       scene.add(b.group);
       this.bugBots.push(b);
     }
+
+    // v2.4: give every bot a random appearance seed (uint16). The client derives
+    // the whole kour-style character from (skin, team) — see src/net/skins.js —
+    // so bots look varied too. Seeded off the room seed + id for determinism.
+    this._skinSeq = (this._nextHumanId ? 0 : 0);
+    for (const b of this.seBots) b.skin = this._makeSkin(b.id);
+    for (const b of this.bugBots) b.skin = this._makeSkin(b.id);
 
     // --- Slots: one per roster position. slot.occupant is the LIVE combatant
     //     (a Bot by default; a human PlayerEntity when a client holds the slot).
@@ -252,6 +260,7 @@ export class ServerMatch {
     const ctx = new HumanCtx(this._nextHumanId(), slot.team, bot.pos);
     ctx.sessionId = sessionId;
     ctx.entity.name = name || this._dealers[slot.team].next();
+    ctx.entity.skin = this._makeSkin(ctx.entity.id); // v2.4 random appearance
     this._wireHumanHooks(ctx);
 
     // The bot despawns (leaves the fight, stops being a target/collider). Its
@@ -291,6 +300,15 @@ export class ServerMatch {
     // Human ids in [1..999]; bot ids start at 1000 (bots.js _nextBotId). Never collide.
     this._humanIdSeq = (this._humanIdSeq || 0) + 1;
     return this._humanIdSeq;
+  }
+
+  // v2.4: a stable, varied appearance seed for a fighter. Mixes the room seed
+  // with the entity id via a hash so two rooms differ and each fighter in a room
+  // looks distinct, while a given (room, id) is deterministic across a reconnect.
+  _makeSkin(id) {
+    let h = ((this.seed >>> 0) ^ Math.imul(id + 1, 0x9e3779b9)) >>> 0;
+    h ^= h >>> 15; h = Math.imul(h, 0x85ebca6b) >>> 0; h ^= h >>> 13;
+    return h & 0xffff; // uint16
   }
 
   humanCount() { return this.humans.size; }
