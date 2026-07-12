@@ -7,9 +7,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server": "node --import ./server/register-json.mjs server/index.js"
   },
   "dependencies": {
+    "colyseus.js": "^0.15.28",
     "three": "^0.170.0"
   },
   "devDependencies": {

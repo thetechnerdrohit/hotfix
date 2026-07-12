@@ -33,6 +33,9 @@ import { MatchHud } from './ui/matchHud.js';
 import { Menus } from './ui/menus.js';
 import { FX } from './config.js';
 import { initTuner } from './debug/tuner.js';
+import { NetClient } from './net/client.js';
+import { AvatarPool } from './net/avatars.js';
+import { EV } from './net/protocol.js';
 
 // Module scratch for the camera-ray closure — zero allocations per shot (I1).
 const _fwd = new THREE.Vector3();
@@ -133,6 +136,12 @@ function boot() {
   // default flow (bots on) replaces the dummies with the Phase-3 SE-vs-Bug
   // match. Practice mode keeps the dummy target list + targetFx alive.
   const WANT_BOTS = !(import.meta.env.DEV && params.get('bots') === '0');
+  // PHASE 5 (approved): ?online=1 joins the authoritative Colyseus server —
+  // quick-match into an open room, humans replace bots (dynamic joining). The
+  // local Match is NOT built; the server owns all entities/scoring. Offline
+  // single-player stays byte-identical without the flag.
+  const ONLINE = params.has('online');
+  const SERVER_URL = params.get('server') || `ws://${location.hostname}:2567`;
   // v1.2: the DEFAULT map is "Shoots" (the ar_shoots clone — verticality capstone).
   // Prod is demoted to the DEV-only ?room=prod flag; ?room=test keeps the Phase-1
   // feel gym (its own spawns + waypoint graph) so ?bots=0 practice + tuning work.
@@ -223,7 +232,7 @@ function boot() {
   // ==========================================================================
   let match = null;
   let playerEntity = null;
-  if (WANT_BOTS) {
+  if (WANT_BOTS && !ONLINE) {
     const graph = makeGraph(room.waypointNodes); // the ACTIVE map's node graph (prod or test)
     playerEntity = new PlayerEntity(1, player, weapons, cam);
     weapons.owner = playerEntity; // kill credit + directional-danger source pos
@@ -265,6 +274,29 @@ function boot() {
   const danger = new DangerStack(cam);          // directional wedges + hurt vignette (F7/F8)
   const vitals = new Vitals(audio);             // low-hp escalating stack (F9)
   const matchHud = new MatchHud();              // scoreboard + kill feed + death/end overlays
+
+  // -- ONLINE (Phase 5): net client + remote avatars + event/HUD wiring -------
+  let net = null, avatars = null, selfDead = false;
+  if (ONLINE) {
+    net = new NetClient(player, cam);
+    avatars = new AvatarPool(scene);
+    net.onWelcome(({ team }) => { hud.setWeapon(weapons.active); matchHud.setScore(0, 0); });
+    net.onEvent((events) => {
+      for (const ev of events) {
+        if (ev.t === EV.KILL) matchHud.addKill({ killerName: ev.killerName, killerTeam: ev.killerTeam, victimName: ev.victimName, victimTeam: ev.victimTeam, weapon: ev.weapon, isHead: !!ev.isHead });
+        else if (ev.t === EV.SHOT) audio.botShot(ev.x, ev.y, ev.z);
+        else if (ev.t === EV.DEATH) {
+          if (ev.id === net.selfId) { selfDead = true; matchHud.showDeath({ killerName: ev.killerName, killerTeam: ev.killerTeam, weapon: ev.weapon, isHead: !!ev.isHead }); cam.setDeathTilt(true); }
+          else { const e = net.entities.get(ev.id); if (e) fx.splat(e.pos, e.pos, SPLAT_PALETTE[e.team] ?? SPLAT_PALETTE.bug); }
+        } else if (ev.t === EV.HIT && ev.by === net.selfId) hud.showHitmarker(!!ev.isHead);
+      }
+    });
+    net.onSnapshot(() => {
+      const self = net.entities.get(net.selfId);
+      if (self && selfDead && !self.dead) { selfDead = false; matchHud.hideDeath(); cam.setDeathTilt(false); danger.reset(); vitals.reset(); }
+      matchHud.setScore(net.match.seScore, net.match.bugScore);
+    });
+  }
   const botAudioFx = new BotAudioFx(match, audio, 'se'); // positional enemy/ally footsteps
   // Health block + scoreboard only exist when there's a match (SE-vs-Bug TDM).
   vitals.setVisible(!!match);
@@ -504,6 +536,17 @@ function boot() {
     // pointer lock — this is the one and only moment the browser will honor it.
     // Do it on BOTH paths (NOLOCK too) so headless/automation still boots audio.
     audio.unlock();
+    // PHASE 5 ONLINE: connect + quick-match first (joinOrCreate lands us in an
+    // open room, replacing a bot). Lock/state only after the join resolves.
+    if (ONLINE && net && !net.room) {
+      menus.setLockHint('Connecting…');
+      net.connect(SERVER_URL).then(() => {
+        menus.setLockHint('');
+        if (NOLOCK) setState('playing');
+        else input.requestLock();
+      }).catch(() => menus.setLockHint('Server unreachable — run `npm run server`.'));
+      return;
+    }
     // Restart (re-folding difficulty via getBotTuning) when Play begins a match
     // that isn't already in progress:
     //   • state 'over' — returned from the MENU button of a FINISHED match; Play
@@ -637,7 +680,7 @@ function boot() {
 
   if (import.meta.env.DEV) {
     initTuner();
-    window.__game = { player, cam, input, weapons, targets, match, playerEntity, state: () => state, audio, fx, viewmodel, danger, vitals, matchHud, botAudioFx };
+    window.__game = { player, cam, input, weapons, targets, match, playerEntity, state: () => state, audio, fx, viewmodel, danger, vitals, matchHud, botAudioFx, net, avatars };
   }
 
   menus.show('start');
@@ -669,7 +712,7 @@ function boot() {
       // PLAYER DEATH ↔ INPUT (§4B): while the player is dead the controller must
       // not move and weapons must not fire — gate on match.playerAlive without
       // touching controller internals. Practice mode (no match) is always alive.
-      const alive = !match || match.playerAlive;
+      const alive = net ? !selfDead : (!match || match.playerAlive);
       // Bots are movement colliders for the player (match.dynamicColliders =
       // static room colliders + living-bot AABBs). Practice mode uses the room.
       const cols = match ? match.dynamicColliders : room.colliders;
@@ -678,11 +721,31 @@ function boot() {
       // would freeze — force the controller back to full speed so a respawn never
       // inherits a stale ADS slowdown (L: ADS is a held state, cleared on respawn).
       if (!alive) player.speedScale = 1;
+      if (net && net.room) {
+        // ONLINE (Phase 5): client-side prediction replaces the raw controller
+        // step — the predictor samples input, advances the SAME controller math
+        // locally, and queues the command; the server reconciles on snapshots.
+        if (alive) {
+          const keys = net.keysFromInput(input);
+          const fireClick = input.takeMousePressed(0);
+          const reloadEdge = input.takePressed('KeyR');
+          const switchTo = net.switchFromInput(input);
+          const cmd = net.predictor.sampleAndPredict(simDt, input, net.predictedColliders(room.colliders), fireClick, reloadEdge, switchTo, keys);
+          net.sendInput(cmd);
+          weapons.update(simDt, input, player); // cosmetic feel only — targets=[], server owns damage
+        }
+        cam.follow(player, simDt);
+        net.tick(performance.now()); // advance remote interpolation + rtt ping (contract omission — required)
+        avatars.sync(net.entities, net.selfId);
+        const selfE = net.entities.get(net.selfId);
+        if (selfE) vitals.tick(selfE.hp, simDt, selfE.dead);
+      } else {
       if (alive) player.update(simDt, input, cam.yaw, cols);
       // Weapons tick AFTER the controller so sprint-out suppression (E7) reads
       // this frame's sprint state; the ray is cast against the just-moved camera.
       cam.follow(player, simDt);
       if (alive) weapons.update(simDt, input, player);
+      }
 
       // Tick the match (bots, respawns, protection, scoring, clock) — always,
       // even while the player is dead (the respawn countdown lives here). It

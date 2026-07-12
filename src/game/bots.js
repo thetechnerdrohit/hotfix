@@ -896,9 +896,13 @@ export class Bot {
   }
 
   _patrol() {
-    const node = this.graph.nodes[this.curNode];
+    // Arrival must be measured against the node we're walking TO (targetNode),
+    // not the one we left (curNode) — on wide-spaced graphs (Battleground
+    // lattice) the old curNode check never fired once the bot left its start
+    // radius, freezing every patrol after one leg (found via server sim trace).
+    const node = this.graph.nodes[this.targetNode];
     _toTarget.set(node.pos.x - this.pos.x, 0, node.pos.z - this.pos.z);
-    // Arrived at the current node? Pick a random neighbor to head to next.
+    // Arrived at the target node? Pick a random neighbor to head to next.
     if (this.targetNode === this.curNode || _toTarget.lengthSq() < this.tuning.arriveRadius * this.tuning.arriveRadius) {
       const arrivedNode = this.graph.nodes[this.targetNode];
       this.curNode = this.targetNode;
