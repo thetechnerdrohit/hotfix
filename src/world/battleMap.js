@@ -4,9 +4,9 @@
 // big, 4x of current" with "big trees, ropes, camping house — all interactive."
 //
 // Layout (~192 × 192 m, pastel palette):
-//   • CENTER: the cloned ar_shoots compound (buildShootsMap embedded with a
-//     GATED berm — four 7 m doors) = the central POI, fully intact: carved
-//     ramps, deck ropes, LED/vent animation, 856-node interior nav.
+//   • CENTER (v2.2): an OPEN VILLAGE — 8 enterable houses around a plaza,
+//     each with a walkable exterior stair to a flat roof (bots path them);
+//     low shoot-over cover; the wall-maze compound moved to DEV ?room=shoots.
 //   • FIELDS: open ground ringing the compound (the PUBG breathing room),
 //     sparse cover crates, small decorative trees.
 //   • 4 CAMP CLUSTERS (corners): two enterable huts each (1.4 m doorways,
@@ -20,9 +20,9 @@
 // authors, so headroom is by construction). Roofs/stands are player-only
 // perches; bots keep ground+compound routes and can still shoot up (3D aim).
 //
-// NAV: compound interior graph (reindexed) + a generated field lattice (8 m,
-// skipping POI footprints) + bridge links through the four gates. DEV
-// self-check asserts single-component connectivity.
+// NAV: authored village street/roof nodes + a generated field lattice (8 m,
+// skipping POI footprints), bridged at the village edge. DEV self-check
+// asserts single-component connectivity.
 //
 // Map rules: hut walls 0.35 m thick (≥ the 0.23 m/frame max step at the dt
 // clamp — no tunneling), doorways ≥ 1.4 (D6), roofs at 2.7 (jump apex can't
@@ -33,7 +33,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PERF } from '../config.js';
-import { buildShootsMap } from './shootsMap.js';
 import { makeSignTexture, makeSignMesh } from './decor.js';
 import BACKDROP from './shootsBackdrop.json';
 
@@ -59,11 +58,14 @@ const P = {
 export function buildBattleMap() {
   const group = new THREE.Group();
 
-  // -- CENTRAL POI: the compound, gated, without its own skyline -------------
-  const compound = buildShootsMap({ berm: 'gated', backdrop: false });
-  group.add(compound.group);
-  const colliders = compound.colliders.slice(); // extended below
-  const ropes = compound.ropes.slice();
+  // -- v2.2 (Rohit): the wall-maze compound is OUT of the default map ("walls
+  //    are very much — keep open spaces"). The center is now an OPEN VILLAGE:
+  //    enterable houses with WALKABLE exterior stairs to flat roofs (0.35 m
+  //    treads — native step-up, and authored as nav edges so bots contest the
+  //    roofs), a plaza, and low cover. The verbatim compound lives on at
+  //    DEV ?room=shoots.
+  const colliders = [];
+  const ropes = [];
 
   // -- merge-bucket helper (same discipline as the other maps) ---------------
   const buckets = new Map();
@@ -95,6 +97,69 @@ export function buildBattleMap() {
   addBox(FIELD_HALF * 2 + BERM_T * 2, BERM_H, BERM_T, 0, 0, FIELD_HALF + BERM_T / 2, P.berm);
   addBox(BERM_T, BERM_H, FIELD_HALF * 2 + BERM_T * 2, -FIELD_HALF - BERM_T / 2, 0, 0, P.berm);
   addBox(BERM_T, BERM_H, FIELD_HALF * 2 + BERM_T * 2, FIELD_HALF + BERM_T / 2, 0, 0, P.berm);
+
+  // -- OPEN VILLAGE CENTER (v2.2) ----------------------------------------------
+  // 8 houses around a plaza. house(): enterable room (1.5 m doorway), flat roof,
+  // and an EXTERIOR STAIR RUN (0.35 rise / 0.5 deep treads, 1.4 wide) up the
+  // rear — players step-up it natively and bots path it (nav edges below).
+  const villageRoofNodes = []; // {x,z,y} per roof + stair foot, for nav
+  function house(cx, cz, w, d, h, stairSide /*'E'|'W'|'N'|'S'*/, color) {
+    const T = 0.35;
+    // walls: back + two sides + door face (1.5 m gap), door faces the plaza (toward 0,0)
+    const doorToPlaza = Math.abs(cx) > Math.abs(cz) ? (cx > 0 ? 'W' : 'E') : (cz > 0 ? 'N' : 'S');
+    const faces = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] };
+    for (const f of ['N', 'S', 'E', 'W']) {
+      const [fx, fz] = faces[f];
+      const isDoor = f === doorToPlaza;
+      const along = fx !== 0 ? d : w; // wall length axis
+      if (!isDoor) {
+        if (fx !== 0) addBox(T, h, d, cx + fx * (w / 2 - T / 2), 0, cz, color);
+        else addBox(w, h, T, cx, 0, cz + fz * (d / 2 - T / 2), color);
+      } else {
+        const seg = (along - 1.5) / 2;
+        if (fx !== 0) {
+          addBox(T, h, seg, cx + fx * (w / 2 - T / 2), 0, cz - (1.5 / 2 + seg / 2), color);
+          addBox(T, h, seg, cx + fx * (w / 2 - T / 2), 0, cz + (1.5 / 2 + seg / 2), color);
+        } else {
+          addBox(seg, h, T, cx - (1.5 / 2 + seg / 2), 0, cz + fz * (d / 2 - T / 2), color);
+          addBox(seg, h, T, cx + (1.5 / 2 + seg / 2), 0, cz + fz * (d / 2 - T / 2), color);
+        }
+      }
+    }
+    addBox(w + 0.4, 0.25, d + 0.4, cx, h, cz, P.hutRoof); // roof slab (walkable top)
+    // exterior stair: treads climbing along stairSide face up to the roof
+    const [sx, sz] = faces[stairSide];
+    const rise = 0.35, deep = 0.5, wTread = 1.4;
+    const steps = Math.ceil((h + 0.25) / rise);
+    for (let k = 1; k <= steps; k++) {
+      const t = Math.min(h + 0.25, k * rise);
+      // treads run parallel to the face, marching toward it from outside
+      const off = (steps - k) * deep + (sx !== 0 ? w / 2 : d / 2) + deep / 2;
+      const tx = cx + sx * off, tz = cz + sz * off;
+      addBox(sx !== 0 ? deep : wTread, t, sx !== 0 ? wTread : deep, tx, 0, tz, P.stand);
+    }
+    const footOff = steps * deep + (sx !== 0 ? w / 2 : d / 2);
+    villageRoofNodes.push({
+      roof: { x: cx, z: cz, y: h + 0.25 },
+      foot: { x: cx + sx * (footOff + 0.6), z: cz + sz * (footOff + 0.6), y: 0 },
+      mid: { x: cx + sx * (footOff * 0.5 + (sx !== 0 ? w / 2 : d / 2) * 0.5), z: cz + sz * (footOff * 0.5 + (sx !== 0 ? w / 2 : d / 2) * 0.5), y: (h + 0.25) / 2 },
+    });
+  }
+  // ring of 8 houses around a plaza (streets ≥6 m), varied sizes/heights
+  house(-14, -10, 6, 5, 2.6, 'W', P.hutWall);
+  house(14, 10, 6, 5, 2.6, 'E', P.hutWall);
+  house(-13, 9, 5, 6, 3.0, 'S', 0xe697b8);
+  house(13, -9, 5, 6, 3.0, 'N', 0xe697b8);
+  house(0, -16, 7, 5, 2.6, 'N', 0xd985aa); // stairs on the REAR (door auto-faces plaza)
+  house(0, 16, 7, 5, 2.6, 'S', 0xd985aa); // stairs on the REAR
+  house(-22, 0, 5, 5, 3.4, 'W', 0xedadc6);
+  house(22, 0, 5, 5, 3.4, 'E', 0xedadc6);
+  // plaza centerpiece + low cover ring
+  addBox(2.2, 1.2, 2.2, 0, 0, 0, P.hutTrim);          // the monument (yellow pop)
+  addBox(3.2, 0.15, 3.2, 0, 1.2, 0, P.hutRoof, { collide: false });
+  for (const [lx, lz, lw] of [[-7, -4, 3], [7, 4, 3], [-4, 7, 2.5], [4, -7, 2.5]]) {
+    addBox(lw, 0.95, 0.4, lx, 0, lz, P.rock);          // shoot-over cover walls
+  }
 
   // -- CAMP CLUSTERS (4 corners) ----------------------------------------------
   // A hut: 5 × 4 footprint, 0.35 walls, 1.4 door gap on +Z face, roof slab 2.7.
@@ -159,7 +224,7 @@ export function buildBattleMap() {
   // -- ROPE VISUALS (all non-compound ropes; compound drew its own) ------------
   {
     const ropeGeos = [];
-    for (const r of ropes.slice(compound.ropes.length)) {
+    for (const r of ropes) { // all ropes are ours now (no embedded compound)
       const line = new THREE.BoxGeometry(0.07, r.yTop - r.yBottom, 0.07);
       line.translate(r.x, (r.yTop + r.yBottom) / 2, r.z);
       ropeGeos.push(line);
@@ -213,15 +278,59 @@ export function buildBattleMap() {
     group.add(sign);
   }
 
-  // -- NAV: compound graph + field lattice + gate bridges -----------------------
-  const nodes = compound.waypointNodes.map((n) => ({ x: n.x, y: n.y, z: n.z, links: n.links.slice() }));
+  // -- LIGHTING (v2.2): the old rig lived inside the embedded compound's group;
+  //    the village must own its own. One hemi + one shadow sun (I3), bounds
+  //    sized to the whole field (2048 map for acceptable softness at ±100 m).
+  const hemi = new THREE.HemisphereLight(0xfff2d6, 0x6a5f42, 2.1);
+  group.add(hemi);
+  const sun = new THREE.DirectionalLight(0xfff0cf, 3.0);
+  sun.position.set(80, 120, 60);
+  if (PERF.shadows) {
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -105; sun.shadow.camera.right = 105;
+    sun.shadow.camera.top = 105; sun.shadow.camera.bottom = -105;
+    sun.shadow.camera.near = 10; sun.shadow.camera.far = 300;
+    sun.shadow.bias = -0.0002;
+    sun.shadow.normalBias = 0.06;
+  }
+  group.add(sun);
+
+  // -- NAV (v2.2): village street/roof nodes + field lattice, one graph ---------
+  const nodes = [];
+  // village: plaza + street ring + doorway-ish nodes
+  const streetPts = [[0, -6], [0, 6], [-6, 0], [6, 0], [-14, -4], [14, 4], [-8, 12], [8, -12], [-18, 6], [18, -6], [0, -11], [0, 11], [-9, -9], [9, 9]];
+  for (const [x, z] of streetPts) nodes.push({ x, y: 0, z, links: [] });
+  // link street nodes within 9.5 m by clear LOS-ish adjacency (authored open plan)
+  for (let i = 0; i < streetPts.length; i++) {
+    for (let j = i + 1; j < streetPts.length; j++) {
+      const dx = nodes[i].x - nodes[j].x, dz = nodes[i].z - nodes[j].z;
+      if (dx * dx + dz * dz < 9.5 * 9.5) { nodes[i].links.push(j); nodes[j].links.push(i); }
+    }
+  }
+  // roofs: foot → mid-stair → roof chains (bots climb with highGroundBias)
+  for (const rn of villageRoofNodes) {
+    const fi = nodes.length; nodes.push({ x: rn.foot.x, y: 0, z: rn.foot.z, links: [] });
+    const mi = nodes.length; nodes.push({ x: rn.mid.x, y: rn.mid.y, z: rn.mid.z, links: [] });
+    const ri = nodes.length; nodes.push({ x: rn.roof.x, y: rn.roof.y, z: rn.roof.z, links: [] });
+    nodes[fi].links.push(mi); nodes[mi].links.push(fi);
+    nodes[mi].links.push(ri); nodes[ri].links.push(mi);
+    // tie the foot into the nearest street node
+    let best = 0, bd = 1e9;
+    for (let i = 0; i < streetPts.length; i++) {
+      const dx = nodes[i].x - rn.foot.x, dz = nodes[i].z - rn.foot.z;
+      const d = dx * dx + dz * dz;
+      if (d < bd) { bd = d; best = i; }
+    }
+    nodes[fi].links.push(best); nodes[best].links.push(fi);
+  }
   const base = nodes.length;
-  const lattice = new Map(); // "gx,gz" → node index
+  const lattice = new Map();
   const STEP = 8;
   const inPoi = (x, z) => {
-    if (Math.abs(x) < 46 && z > -44 && z < 34) return true; // compound + margin
+    if (Math.abs(x) < 30 && Math.abs(z) < 22) return true; // village core (streets carry it)
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-      if (Math.abs(x - sx * 66) < 8 && Math.abs(z - sz * 66) < 8) return true; // camps
+      if (Math.abs(x - sx * 66) < 8 && Math.abs(z - sz * 66) < 8) return true;
     }
     for (const [tx, tz] of GREATS) if (Math.abs(x - tx) < 2.4 && Math.abs(z - tz) < 2.4) return true;
     return false;
@@ -242,28 +351,22 @@ export function buildBattleMap() {
       if (nb !== undefined) { nodes[idx].links.push(nb); nodes[nb].links.push(idx); }
     }
   }
-  // bridges: gate ↔ nearest field node AND gate ↔ nearest compound node
-  for (const gate of compound.gates) {
-    let bestF = -1, bfd = 1e9, bestC = -1, bcd = 1e9;
-    for (let i = 0; i < nodes.length; i++) {
-      const n = nodes[i];
-      if (n.y > 0.5) continue;
-      const d = (n.x - gate.x) ** 2 + (n.z - gate.z) ** 2;
-      if (i >= base) { if (d < bfd) { bfd = d; bestF = i; } }
-      else if (d < bcd) { bcd = d; bestC = i; }
+  // bridge the village to the field: outer street nodes ↔ nearest lattice node
+  for (const i of [4, 5, 8, 9, 10, 11]) {
+    let best = -1, bd = 1e9;
+    for (const [, idx] of lattice) {
+      const dx = nodes[idx].x - nodes[i].x, dz = nodes[idx].z - nodes[i].z;
+      const d = dx * dx + dz * dz;
+      if (d < bd) { bd = d; best = idx; }
     }
-    if (bestF >= 0 && bestC >= 0) {
-      nodes[bestF].links.push(bestC);
-      nodes[bestC].links.push(bestF);
-    }
+    if (best >= 0) { nodes[i].links.push(best); nodes[best].links.push(i); }
   }
-  // DEV self-check: single connected component
   if (import.meta.env.DEV) {
     const seen = new Uint8Array(nodes.length);
     const q = [0]; seen[0] = 1; let reach = 1;
     while (q.length) { const c = q.pop(); for (const nb of nodes[c].links) if (!seen[nb]) { seen[nb] = 1; reach++; q.push(nb); } }
-    if (reach !== nodes.length) console.warn(`[battle] NAV connectivity ${reach}/${nodes.length} — field/compound bridge broken`);
-    else console.info(`[battle] nav OK: ${nodes.length} nodes (${base} compound + ${nodes.length - base} field), 1 component`);
+    if (reach !== nodes.length) console.warn(`[battle] NAV connectivity ${reach}/${nodes.length}`);
+    else console.info(`[battle] nav OK: ${nodes.length} nodes (village ${base} + field ${nodes.length - base}), 1 component`);
   }
 
   // -- SPAWNS: field edges (PUBG drop vibe — fight toward the center) -----------
@@ -286,8 +389,8 @@ export function buildBattleMap() {
     bugSpawns,
     waypointNodes: nodes,
     ropes,
-    background: compound.background,
-    fog: new THREE.Fog(compound.fog.color, 70, 320), // big-field visibility
-    update: compound.update, // LED/vent animation lives in the embedded POI
+    background: new THREE.Color(0xe8c9d7), // pale pink sky (pastel)
+    fog: new THREE.Fog(0xe8c9d7, 70, 320), // big-field visibility
+    update: null, // no animated groups in the village yet (lamps are steady)
   };
 }
