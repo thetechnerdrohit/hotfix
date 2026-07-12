@@ -117,16 +117,34 @@ export class Viewmodel {
   // purely visual and the shot truth (camera ray) is untouched.
 
   _buildRifle() {
+    // v2.6 LOOKS (kour.io "one step ahead"): a believable SMG/carbine silhouette.
+    // Palette kept tight: slate upper, dark lower/barrel/mag, near-black details,
+    // teal accent (the red-dot glass). All cosmetic — muzzle anchor unchanged.
     const g = new THREE.Group();
-    g.add(box(0.09, 0.11, 0.34, 0, 0, -0.12, 0x2f3646));    // receiver/body (slate)
-    g.add(box(0.05, 0.055, 0.34, 0, 0.005, -0.32, 0x232838)); // barrel (dark, longer)
-    g.add(box(0.035, 0.035, 0.06, 0, 0.06, -0.44, 0x1b2030)); // front sight post
-    g.add(box(0.05, 0.03, 0.09, 0, 0.075, -0.08, 0x39414f)); // rear sight rail
-    g.add(box(0.05, 0.03, 0.10, 0, 0.075, -0.10, 0x3fb89e)); // sight accent (teal)
-    g.add(box(0.07, 0.15, 0.09, 0.0, -0.12, 0.0, 0x2a3040)); // pistol grip
-    g.add(box(0.055, 0.12, 0.16, 0, -0.11, -0.18, 0x2a2f3d)); // magazine (canted fwd)
-    g.add(box(0.06, 0.09, 0.14, 0, -0.01, 0.10, 0x272c3a));  // stock hint (rear)
-    addHands(g, CHARACTER.handColor, 0.02, -0.09, 0.0, -0.26); // trigger + support hands
+    const SLATE = 0x2f3646, DARK = 0x232838, BLACK = 0x1b2030, MID = 0x39414f, TEAL = 0x3fb89e;
+    // --- Receiver: segmented upper + lower so it reads as a real gun body ------
+    g.add(box(0.085, 0.075, 0.30, 0, 0.02, -0.12, SLATE));   // upper receiver
+    g.add(box(0.085, 0.06, 0.20, 0, -0.035, -0.06, 0x2a3040)); // lower receiver
+    g.add(box(0.04, 0.03, 0.05, 0.045, -0.02, -0.03, MID));   // ejection port / charging nub
+    // --- Handguard / foregrip section (segmented rail look) --------------------
+    g.add(box(0.06, 0.06, 0.20, 0, -0.005, -0.30, 0x272c3a)); // handguard
+    g.add(box(0.062, 0.018, 0.20, 0, 0.03, -0.30, MID));      // top rail on handguard
+    g.add(box(0.03, 0.05, 0.07, 0, -0.055, -0.28, 0x2a3040, 0.35)); // angled foregrip
+    // --- Barrel + muzzle detail + front sight post -----------------------------
+    g.add(box(0.038, 0.038, 0.20, 0, 0.0, -0.44, DARK));      // barrel (protrudes past handguard)
+    g.add(box(0.05, 0.05, 0.05, 0, 0.0, -0.55, BLACK));       // muzzle device / flash hider
+    g.add(box(0.03, 0.05, 0.045, 0, 0.055, -0.46, BLACK));    // front sight post
+    // --- Optic: small red-dot block with teal "glass" --------------------------
+    g.add(box(0.055, 0.045, 0.10, 0, 0.07, -0.10, 0x2a3040)); // optic housing
+    g.add(box(0.04, 0.032, 0.045, 0, 0.075, -0.055, TEAL));   // red-dot glass (teal accent)
+    g.add(box(0.05, 0.02, 0.06, 0, 0.062, -0.24, MID));       // rear iron-sight hint
+    // --- Grip / mag / stock ----------------------------------------------------
+    g.add(box(0.07, 0.15, 0.085, 0.0, -0.135, 0.0, 0x2a3040, -0.14)); // pistol grip (raked)
+    g.add(box(0.05, 0.05, 0.10, 0.0, -0.05, -0.03, BLACK));   // trigger-guard block
+    g.add(box(0.055, 0.14, 0.14, 0, -0.135, -0.16, DARK, 0.16)); // curved magazine (canted fwd)
+    g.add(box(0.05, 0.04, 0.10, 0, -0.02, 0.12, 0x272c3a));   // stock neck
+    g.add(box(0.07, 0.11, 0.06, 0, -0.03, 0.18, DARK));       // stock butt
+    addHands(g, CHARACTER.handColor, 0.02, -0.09, 0.0, -0.28); // trigger + foregrip hands
     const muzzle = new THREE.Object3D();
     muzzle.position.set(0, -0.01, -0.46); // UNCHANGED (FX contract)
     g.add(muzzle);
@@ -134,14 +152,27 @@ export class Viewmodel {
   }
 
   _buildPistol() {
+    // v2.6 LOOKS: slide + frame + angled grip + trigger-guard loop hint + sights.
     const g = new THREE.Group();
-    g.add(box(0.06, 0.075, 0.22, 0, 0.01, -0.08, 0x2f3646)); // slide
-    g.add(box(0.055, 0.02, 0.20, 0, 0.055, -0.07, 0x39414f)); // slide top / rib
-    g.add(box(0.038, 0.038, 0.09, 0, 0.005, -0.18, 0x232838)); // barrel/muzzle end
-    g.add(box(0.045, 0.02, 0.055, 0, 0.06, -0.10, 0x3fb89e)); // sight accent
-    g.add(box(0.06, 0.13, 0.07, 0, -0.09, 0.02, 0x2a3040, 0.18)); // grip (angled)
-    g.add(box(0.02, 0.05, 0.05, 0.0, -0.035, -0.045, 0x1b2030)); // trigger-guard hint
-    addHands(g, CHARACTER.handColor, 0.01, -0.07, 0.02, -0.10);
+    const SLATE = 0x2f3646, DARK = 0x232838, BLACK = 0x1b2030, MID = 0x39414f, TEAL = 0x3fb89e;
+    // --- Slide (with a rib + serrations hint) + separate frame -----------------
+    g.add(box(0.058, 0.06, 0.24, 0, 0.02, -0.08, SLATE));    // slide
+    g.add(box(0.06, 0.02, 0.055, 0, 0.03, 0.03, MID));       // rear slide serrations block
+    g.add(box(0.052, 0.018, 0.22, 0, 0.055, -0.08, MID));    // slide top rib
+    g.add(box(0.06, 0.045, 0.14, 0, -0.02, -0.02, 0x2a3040)); // frame / dust cover
+    g.add(box(0.038, 0.038, 0.08, 0, 0.01, -0.20, DARK));    // barrel / muzzle end
+    g.add(box(0.045, 0.045, 0.035, 0, 0.01, -0.235, BLACK)); // muzzle crown
+    // --- Sights: rear notch + front post + teal accent -------------------------
+    g.add(box(0.05, 0.022, 0.03, 0, 0.06, 0.02, BLACK));     // rear sight
+    g.add(box(0.02, 0.022, 0.025, 0, 0.06, -0.185, BLACK));  // front sight
+    g.add(box(0.042, 0.018, 0.05, 0, 0.062, -0.06, TEAL));   // sight accent (teal)
+    // --- Grip + trigger guard + butt -------------------------------------------
+    g.add(box(0.058, 0.15, 0.075, 0, -0.10, 0.03, 0x2a3040, 0.22)); // grip (angled)
+    g.add(box(0.062, 0.03, 0.08, 0, -0.175, 0.04, DARK, 0.22));     // magazine butt cap
+    g.add(box(0.018, 0.06, 0.02, 0, -0.05, -0.06, BLACK));   // trigger-guard front bar
+    g.add(box(0.018, 0.02, 0.055, 0, -0.075, -0.035, BLACK)); // trigger-guard bottom (loop hint)
+    g.add(box(0.02, 0.035, 0.03, 0, -0.04, -0.03, MID));     // trigger
+    addHands(g, CHARACTER.handColor, 0.01, -0.075, 0.03, -0.02); // grip hands (support tucks close)
     const muzzle = new THREE.Object3D();
     muzzle.position.set(0, 0.005, -0.24); // UNCHANGED (FX contract)
     g.add(muzzle);
@@ -153,15 +184,26 @@ export class Viewmodel {
     // All parts live in an inner `pose` group canted like a fist grip — blade
     // longer, angled up-and-across the view; the outer group keeps receiving
     // the shared anim transforms (raise/sway/swing) untouched.
+    // v2.6 LOOKS: a real knife shape — tapered blade (spine + bevel + point tip),
+    // a proper crossguard, and a wrapped grip with a pommel cap.
     const g = new THREE.Group();
     const pose = new THREE.Group();
     pose.position.set(-0.05, 0.03, 0.02);
     pose.rotation.set(0.22, -0.35, -0.55); // tip up, angled inward, canted grip
     g.add(pose);
-    pose.add(box(0.036, 0.12, 0.07, 0, -0.07, 0.05, 0x2a3040));  // handle (in the fist)
-    pose.add(box(0.07, 0.022, 0.045, 0, -0.005, 0.0, 0x1b2030)); // guard (crossbar)
-    pose.add(box(0.028, 0.055, 0.34, 0, 0.0, -0.17, 0xcdd6e6));  // blade spine (longer)
-    pose.add(box(0.006, 0.058, 0.34, 0.015, 0.0, -0.17, 0xeef3fb)); // edge bevel
+    const STEEL = 0xcdd6e6, EDGE = 0xeef3fb, GRIP = 0x2a3040, DARK = 0x1b2030, MID = 0x39414f;
+    // --- Grip: wrapped handle + pommel cap -------------------------------------
+    pose.add(box(0.038, 0.13, 0.07, 0, -0.075, 0.05, GRIP));   // handle (in the fist)
+    pose.add(box(0.03, 0.018, 0.06, 0, -0.045, 0.05, DARK));   // wrap ring
+    pose.add(box(0.03, 0.018, 0.06, 0, -0.10, 0.05, DARK));    // wrap ring
+    pose.add(box(0.048, 0.028, 0.075, 0, -0.145, 0.055, MID)); // pommel cap
+    // --- Crossguard ------------------------------------------------------------
+    pose.add(box(0.075, 0.024, 0.05, 0, -0.005, 0.005, DARK)); // guard (crossbar)
+    // --- Blade: full-width spine, thin bevel edge, tapering to a point ---------
+    pose.add(box(0.026, 0.05, 0.30, 0, 0.0, -0.16, STEEL));    // blade spine (main)
+    pose.add(box(0.006, 0.054, 0.30, 0.014, 0.0, -0.16, EDGE)); // edge bevel (offset to a side)
+    pose.add(box(0.02, 0.036, 0.06, 0, 0.006, -0.335, STEEL, 0, 0.22)); // tapered point tip
+    pose.add(box(0.005, 0.04, 0.06, 0.01, 0.006, -0.335, EDGE, 0, 0.22)); // point bevel
     // Single substantial gripping fist wrapped around the handle (blade-forward in
     // a fist — NOT a two-handed hold). Forearm sweeps out to the lower corner.
     _fistArm(pose, CHARACTER.handColorKnife, 0.0, -0.08, 0.06, 0.5, 0.3, 0.24);
