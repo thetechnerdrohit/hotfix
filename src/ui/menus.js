@@ -50,7 +50,7 @@ export class Menus {
     this.fastToggle = document.getElementById('fast-toggle');
     this.fastHintEl = document.getElementById('fast-hint');
 
-    this.playCb = null;
+    this.playCb = null;    // (mode) => start — 'tdm' | 'ffa' (v2.7)
     this.sensCb = null;
     this.fovCb = null;
     this.volCb = null;
@@ -61,8 +61,12 @@ export class Menus {
     this.setDifficulty(settings.difficulty);
     this.setFast(settings.fast);
 
-    document.getElementById('btn-play').addEventListener('click', () => this.playCb?.());
-    document.getElementById('btn-resume').addEventListener('click', () => this.playCb?.());
+    // v2.7: two Play buttons pass the chosen mode; Resume replays the last mode.
+    this._lastMode = 'tdm';
+    document.getElementById('btn-play').addEventListener('click', () => { this._lastMode = 'tdm'; this.playCb?.('tdm'); });
+    const ffaBtn = document.getElementById('btn-play-ffa');
+    if (ffaBtn) ffaBtn.addEventListener('click', () => { this._lastMode = 'ffa'; this.playCb?.('ffa'); });
+    document.getElementById('btn-resume').addEventListener('click', () => this.playCb?.(this._lastMode));
 
     this.sens.addEventListener('input', () => {
       this.renderSliderValues();

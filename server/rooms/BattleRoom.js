@@ -28,11 +28,15 @@ const FIXED_DT = 1 / NET.tickRate;
 
 export class BattleRoom extends Room {
   onCreate(options) {
-    this.maxClients = NET.maxClients;
-    this.autoDispose = false; // keep the match alive with 0 humans (all-bot fallback)
+    // v2.7: mode comes from the registered room type (index.js sets this.mode on
+    // the subclass) or an option. TDM caps at 10 (5v5); FFA caps at ffaMaxPlayers.
+    const mode = this.mode || (options && options.mode) || 'tdm';
+    this.mode = mode;
+    this.maxClients = mode === 'ffa' ? NET.ffaMaxPlayers : NET.maxClients;
+    this.autoDispose = false; // keep the room alive with 0 humans (TDM = all-bot fallback; FFA = empty, waiting)
 
     this.world = loadWorld();
-    this.match = new ServerMatch(this.world, (options && options.seed) || 0x1234abcd);
+    this.match = new ServerMatch(this.world, { mode, seed: (options && options.seed) || 0x1234abcd });
 
     // Test-only live-room tracker (lets the headless sim test reach the running
     // instance in-process). Harmless in production — just an array of refs.
@@ -70,6 +74,7 @@ export class BattleRoom extends Room {
       selfId: ctx.entity.id,
       team: TEAM_ID[ctx.entity.team],
       mapName: this.world.name,
+      mode: this.mode, // v2.7 'tdm' | 'ffa' — client picks HUD layout
       tickRate: NET.tickRate,
       interpDelayMs: NET.interpDelayMs,
     });
@@ -154,6 +159,7 @@ export class BattleRoom extends Room {
       e.protectedUntil = c.protectedUntil || 0;
       e.ackSeq = isBot ? 0 : (s.human ? s.human.lastAckSeq : 0);
       e.skin = c.skin || 0; // v2.4 appearance seed (client derives the body)
+      e.frags = Math.max(0, Math.min(65535, c.frags || 0)); // v2.7 FFA per-player score
     }
     if (full) {
       // Remove any stale entries (id changed on a human↔bot swap → both ids stay,
@@ -169,7 +175,13 @@ export class BattleRoom extends Room {
     this.state.bugScore = this.match.scores.bug;
     this.state.clock = this.match.clock;
     this.state.phase = this.match.state;
-    this.state.winner = this.match.result ? this.match.result.winner : '';
+    this.state.mode = this.match.mode; // v2.7 'tdm' | 'ffa'
+    // TDM winner = 'se'|'bug'|'draw'; FFA winner = the top player's NAME. The
+    // client rebuilds the FFA leaderboard from entity `frags`, so only the
+    // headline winner needs to ride the match state.
+    this.state.winner = this.match.result
+      ? (this.match.result.mode === 'ffa' ? (this.match.result.winnerName || '') : this.match.result.winner)
+      : '';
   }
 
   _drainEvents() {

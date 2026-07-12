@@ -34,8 +34,8 @@ export const WEAPON_ID = { rifle: 0, pistol: 1, knife: 2 };
 export const WEAPON_NAME = ['rifle', 'pistol', 'knife'];
 
 // --- Team id table ----------------------------------------------------------
-export const TEAM_ID = { se: 0, bug: 1 };
-export const TEAM_NAME = ['se', 'bug'];
+export const TEAM_ID = { se: 0, bug: 1, ffa: 2 }; // v2.7: 'ffa' = teamless FFA fighter
+export const TEAM_NAME = ['se', 'bug', 'ffa'];
 
 // --- Event kinds on the EVENTS channel --------------------------------------
 export const EV = {
@@ -53,8 +53,13 @@ export const NET = {
   maxCmdDtMs: 50,        // server rejects a command dt above this (== MOVE.dtClampMs)
   maxCmdsPerSec: 120,    // per-client command rate cap (basic anti-cheat)
   lagCompWindowMs: 300,  // server position ring-buffer length for rewind hitscan
-  maxClients: 10,        // one 10-slot TDM room (5 SE / 5 Bug)
+  maxClients: 10,        // TDM: one 10-slot room (5 SE / 5 Bug)
+  ffaMaxPlayers: 12,     // v2.7 FFA: humans-only room cap (mirror of MATCH.ffaMaxPlayers)
 };
+
+// v2.7 — the two matchmaking room types. The client joinOrCreate()s one of these
+// based on which Play button was clicked; the server registers both (index.js).
+export const ROOM_TYPE = { tdm: 'tdm', ffa: 'ffa' };
 
 // InputCommand shape (client → server, MSG.INPUT):
 //   {

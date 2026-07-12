@@ -73,6 +73,17 @@
       <span id="score-bug" class="score">0</span>
     </div>
 
+    <!-- v2.7 FFA scoreboard: clock + your frags vs the current leader. Reuses the
+         top-center slot; shown instead of the SE:BUG board in Free-for-All. -->
+    <div id="ffa-scoreboard" class="hidden">
+      <span id="ffa-you">YOU 0</span>
+      <span id="ffa-clock">10:00</span>
+      <span id="ffa-lead">1st 0</span>
+    </div>
+
+    <!-- v2.7 FFA live leaderboard, top-left: top few players by frags. -->
+    <div id="ffa-board" class="hidden"></div>
+
     <!-- Kill feed, top-right: last 4 rows, fading, pooled (G7). -->
     <div id="killfeed"></div>
 
@@ -99,7 +110,13 @@
       <h1>HOTFIX<span class="cursor">_</span></h1>
       <p class="tagline">5 Software Engineers vs. 5 Bugs. You're clearing bugs out of production.</p>
       <p class="shapes" aria-hidden="true">&#9675;&nbsp;&nbsp;&#9651;&nbsp;&nbsp;&#9633;</p>
-      <button id="btn-play" class="primary">Enter Prod</button>
+      <!-- v2.7: two Play buttons pick the mode → the client joinOrCreate()s the
+           matching room type. 5v5 = team deathmatch (bots backfill); Free-for-All
+           = everyone vs everyone, humans only, most frags in 10 min wins. -->
+      <div id="play-buttons">
+        <button id="btn-play" class="primary">Play 5v5</button>
+        <button id="btn-play-ffa" class="primary">Play Free-for-All</button>
+      </div>
       <p id="hint-start" class="hint"></p>
 
       <!-- Front-door options — same visual language as the pause sliders. These
@@ -168,6 +185,8 @@
       <div id="matchend-verdict">PROD IS STABLE</div>
       <div id="matchend-sub"></div>
       <div id="matchend-score"><span id="me-se">0</span> <span class="me-dash">–</span> <span id="me-bug">0</span></div>
+      <!-- v2.7 FFA final leaderboard (shown instead of the team score in FFA). -->
+      <div id="matchend-board" class="hidden"></div>
       <div id="matchend-buttons">
         <button id="btn-playagain" class="primary">Play again</button>
         <button id="btn-tomenu" class="ghost">Menu</button>

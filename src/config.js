@@ -484,11 +484,17 @@ export const PROPS = {
 
 export const MATCH = {
   teamSize: 5,             // 5 SE (you + 4 bots) vs 5 Bugs (bots)
-  killTarget: 30,          // first team to this many enemy kills wins
-  timeLimit: 300,          // seconds; higher score at expiry wins, equal = draw
-  respawnDelay: 3.0,       // §4B: death → 3 s → respawn (player AND bots)
+  killTarget: 0,           // v2.7: 0 = no early frag-limit end; the 10-min TIMER decides (Rohit)
+  timeLimit: 600,          // v2.7: 10-minute matches (was 300). Higher score at expiry wins.
+  respawnDelay: 3.0,       // §4B: death → 3 s → respawn (player AND bots) — endless respawns
   spawnProtection: 1.5,    // §4B/F10: damage-immune + de-prioritized; breaks the moment you FIRE
-  restartDelay: 4.0,       // seconds the "match over" screen holds before an auto-restart is allowed
+  restartDelay: 8.0,       // seconds the "match over" RESULT screen holds before an auto-restart
+
+  // v2.7 FREE-FOR-ALL (FFA) mode knobs. FFA = no teams, endless respawn, most
+  // frags at time-up wins; HUMANS ONLY (no bots — Rohit). Cap keeps an arena
+  // busy-but-readable; joinOrCreate spins a new FFA room past the cap.
+  ffaMaxPlayers: 12,       // hard cap of humans in one FFA room
+  ffaFragLimit: 0,         // 0 = timer decides; >0 would end early at first-to-N frags
 };
 
 // ---------------------------------------------------------------------------

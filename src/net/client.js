@@ -92,16 +92,21 @@ export class NetClient {
   onWelcome(cb) { this._onWelcome = cb; }
 
   // Connect + quick-match. `url` e.g. 'ws://localhost:2567'. `opts.name` optional.
+  // v2.7: `opts.mode` ('tdm' | 'ffa') picks the room TYPE — this is the whole
+  // matchmaking mechanism (the two Play buttons pass one or the other).
   async connect(url, opts = {}) {
     const wsUrl = url || `ws://${location.hostname}:2567`;
     this.client = new Client(wsUrl);
-    this.room = await this.client.joinOrCreate('battle', { name: opts.name });
+    const roomType = opts.mode === 'ffa' ? 'ffa' : 'tdm';
+    this.mode = roomType;
+    this.room = await this.client.joinOrCreate(roomType, { name: opts.name });
 
     this.room.onMessage(MSG.WELCOME, (w) => {
       this.selfId = w.selfId;
       this.selfTeam = TEAM_NAME[w.team] || 'se';
       this.mapName = w.mapName;
-      if (this._onWelcome) this._onWelcome({ selfId: w.selfId, team: this.selfTeam, mapName: w.mapName });
+      this.mode = w.mode || roomType; // authoritative mode from the server
+      if (this._onWelcome) this._onWelcome({ selfId: w.selfId, team: this.selfTeam, mapName: w.mapName, mode: this.mode });
     });
 
     this.room.onMessage(MSG.EVENTS, (evs) => {
@@ -189,6 +194,7 @@ export class NetClient {
     this.match.clock = state.clock;
     this.match.phase = state.phase;
     this.match.winner = state.winner;
+    this.match.mode = state.mode || 'tdm'; // v2.7
 
     if (this._onSnapshot) this._onSnapshot();
   }

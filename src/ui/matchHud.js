@@ -47,6 +47,15 @@ export class MatchHud {
     this.boardEl.style.setProperty('--se', HUD.seColor);
     this.boardEl.style.setProperty('--bug', HUD.bugColor);
 
+    // v2.7 FFA HUD elements (top-center frags board + top-left live leaderboard).
+    this.ffaBoardEl = document.getElementById('ffa-scoreboard');
+    this.ffaYouEl = document.getElementById('ffa-you');
+    this.ffaClockEl = document.getElementById('ffa-clock');
+    this.ffaLeadEl = document.getElementById('ffa-lead');
+    this.ffaListEl = document.getElementById('ffa-board');
+    this._ffaMode = false;
+    this._lastFfaYou = -1; this._lastFfaLead = -1; this._lastFfaClock = '';
+
     // -- Kill feed (pooled rows, G7) ---------------------------------------
     this.feedEl = document.getElementById('killfeed');
     this.rows = [];
@@ -95,8 +104,33 @@ export class MatchHud {
   // Show/hide the whole match HUD (scoreboard + feed live-ness). Kill feed rows
   // hide themselves via life; the scoreboard toggles here. Practice mode hides it.
   setVisible(on) {
-    this.boardEl.classList.toggle('hidden', !on);
+    // Show the board matching the active mode; hide the other.
+    this.boardEl.classList.toggle('hidden', !on || this._ffaMode);
+    this.ffaBoardEl.classList.toggle('hidden', !on || !this._ffaMode);
+    this.ffaListEl.classList.toggle('hidden', !on || !this._ffaMode);
     if (!on) this.clearFeed();
+  }
+
+  // v2.7: switch the HUD between team-scoreboard (TDM) and frags board (FFA).
+  setMode(mode) {
+    const ffa = mode === 'ffa';
+    if (ffa === this._ffaMode) return;
+    this._ffaMode = ffa;
+    this.boardEl.classList.toggle('hidden', ffa);
+    this.ffaBoardEl.classList.toggle('hidden', !ffa);
+    this.ffaListEl.classList.toggle('hidden', !ffa);
+  }
+
+  // v2.7 FFA: your frags + the current leader (top-center), plus a live top-N
+  // leaderboard (top-left). `board` is [{name,frags,isSelf}] sorted desc.
+  setFfaScore(board, youFrags) {
+    if (youFrags !== this._lastFfaYou) { this._lastFfaYou = youFrags; this.ffaYouEl.textContent = `YOU ${youFrags}`; }
+    const lead = board.length ? board[0].frags : 0;
+    if (lead !== this._lastFfaLead) { this._lastFfaLead = lead; this.ffaLeadEl.textContent = `1st ${lead}`; }
+    // Live leaderboard: top 5 rows, "N. name  frags", self highlighted.
+    const top = board.slice(0, 5);
+    const html = top.map((r, i) => `<div class="ffa-row${r.isSelf ? ' self' : ''}"><span>${i + 1}. ${escapeHtml(r.name)}</span><b>${r.frags}</b></div>`).join('');
+    if (html !== this._lastFfaHtml) { this._lastFfaHtml = html; this.ffaListEl.innerHTML = html; }
   }
 
   // ---- Scoreboard (event-driven text; G2) ---------------------------------
@@ -108,9 +142,17 @@ export class MatchHud {
   // Clock reads match.clock each frame but writes at most once per second (G2).
   setClock(seconds) {
     const s = mmss(seconds);
-    if (s !== this._lastClock) { this._lastClock = s; this.clockEl.textContent = s; }
+    if (s !== this._lastClock) {
+      this._lastClock = s;
+      this.clockEl.textContent = s;
+      this.ffaClockEl.textContent = s; // v2.7 both boards share the clock string
+    }
     const urgent = seconds <= 10;
-    if (urgent !== this._lastUrgent) { this._lastUrgent = urgent; this.clockEl.classList.toggle('urgent', urgent); }
+    if (urgent !== this._lastUrgent) {
+      this._lastUrgent = urgent;
+      this.clockEl.classList.toggle('urgent', urgent);
+      this.ffaClockEl.classList.toggle('urgent', urgent);
+    }
   }
 
   // ---- Kill feed (G7) ------------------------------------------------------
@@ -189,9 +231,32 @@ export class MatchHud {
     this.endEl.classList.remove('hidden');
   }
 
+  // v2.7 FFA result: a WINNER banner + final leaderboard (no team score).
+  // `board` = [{name,frags}] desc; `winnerName` the top player; `selfName` to
+  // highlight you. Reuses the match-end overlay shell + its Play again/Menu.
+  showFfaEnd(board, winnerName, selfName) {
+    this._endShown = true;
+    const youWon = winnerName && winnerName === selfName;
+    this.endVerdictEl.textContent = youWon ? 'TOP FRAGGER 🏆' : 'MATCH OVER';
+    this.endSubEl.textContent = winnerName ? `${winnerName} wins` : 'FREE-FOR-ALL';
+    this.endCardEl.style.setProperty('--verdict', youWon ? HUD.seColor : HUD.neutralColor);
+    this.endScoreEl?.classList.add('hidden'); // hide the team score row
+    document.getElementById('matchend-score')?.classList.add('hidden');
+    const el = document.getElementById('matchend-board');
+    if (el) {
+      el.classList.remove('hidden');
+      el.innerHTML = board.slice(0, 8).map((r, i) =>
+        `<div class="me-row${r.name === selfName ? ' self' : ''}"><span>${i + 1}. ${escapeHtml(r.name)}</span><b>${r.frags}</b></div>`).join('');
+    }
+    this.endEl.classList.remove('hidden');
+  }
+
   hideEnd() {
     this._endShown = false;
     this.endEl.classList.add('hidden');
+    // Restore the team-score row for a subsequent TDM end.
+    document.getElementById('matchend-score')?.classList.remove('hidden');
+    document.getElementById('matchend-board')?.classList.add('hidden');
   }
 
   get endShown() { return this._endShown; }
@@ -250,4 +315,12 @@ function weaponGlyph(weapon) {
   if (weapon === 'knife') return ' 🔪 ';
   if (weapon === 'chicken') return ' 🐔 '; // v2.3 personal chicken point
   return ' ✕ ';
+}
+
+// v2.7: names come from the server (already length-capped) but they're player-
+// supplied, so escape before innerHTML in the FFA leaderboards.
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
 }

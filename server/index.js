@@ -23,7 +23,14 @@ const gameServer = new Server({
   transport: new WebSocketTransport({ server: httpServer }),
 });
 
-gameServer.define('battle', BattleRoom);
+// v2.7: two matchmaking room types. Both are BattleRoom with a fixed `mode`; the
+// client joinOrCreate()s 'tdm' or 'ffa' based on which Play button was clicked.
+class TdmRoom extends BattleRoom { constructor() { super(); this.mode = 'tdm'; } }
+class FfaRoom extends BattleRoom { constructor() { super(); this.mode = 'ffa'; } }
+gameServer.define('tdm', TdmRoom);
+gameServer.define('ffa', FfaRoom);
+// Back-compat: the old 'battle' type still resolves to TDM (older clients).
+gameServer.define('battle', TdmRoom);
 
 gameServer.listen(PORT).then(() => {
   console.log(`[hotfix] BattleRoom server listening on ws://localhost:${PORT}`);

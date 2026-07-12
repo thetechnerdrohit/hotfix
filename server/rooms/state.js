@@ -33,6 +33,8 @@ export class EntitySchema extends Schema {
                         // randomized kour-style character deterministically from
                         // (skin, team), so every client renders the SAME body for
                         // a given fighter with just 2 bytes on the wire.
+    this.frags = 0;     // v2.7: per-player FFA frag count (0 in TDM; the client
+                        // builds the live + final FFA leaderboard from this).
   }
 }
 defineTypes(EntitySchema, {
@@ -48,6 +50,7 @@ defineTypes(EntitySchema, {
   protectedUntil: 'float32',
   ackSeq: 'uint32',
   skin: 'uint16',
+  frags: 'uint16',
 });
 
 export class MatchState extends Schema {
@@ -58,8 +61,9 @@ export class MatchState extends Schema {
     this.bugScore = 0;
     this.clock = 0;      // seconds remaining (game-time)
     this.phase = 'live'; // 'live' | 'over'
-    this.winner = '';    // '' until over, then 'se' | 'bug' | 'draw'
+    this.winner = '';    // TDM: '' until over, then 'se'|'bug'|'draw'. FFA: winner name.
     this.mapName = 'battle';
+    this.mode = 'tdm';   // v2.7: 'tdm' | 'ffa' — client picks HUD + result layout
   }
 }
 defineTypes(MatchState, {
@@ -70,4 +74,5 @@ defineTypes(MatchState, {
   phase: 'string',
   winner: 'string',
   mapName: 'string',
+  mode: 'string',
 });

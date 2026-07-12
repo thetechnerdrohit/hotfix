@@ -270,11 +270,16 @@ function boot() {
   const matchHud = new MatchHud();              // scoreboard + kill feed + death/end overlays
 
   // -- ONLINE (Phase 5): net client + remote avatars + event/HUD wiring -------
-  let net = null, avatars = null, selfDead = false;
+  let net = null, avatars = null, selfDead = false, onlineEndShown = false;
   if (ONLINE) {
     net = new NetClient(player, cam);
     avatars = new AvatarPool(scene);
-    net.onWelcome(({ team }) => { hud.setWeapon(weapons.active); matchHud.setScore(0, 0); });
+    net.onWelcome(({ mode }) => {
+      hud.setWeapon(weapons.active);
+      matchHud.setMode(mode);           // v2.7 pick team-scoreboard vs FFA frags board
+      matchHud.setVisible(true);
+      onlineEndShown = false;           // fresh room → no stale result overlay
+    });
     net.onEvent((events) => {
       for (const ev of events) {
         if (ev.t === EV.KILL) {
@@ -298,7 +303,34 @@ function boot() {
     net.onSnapshot(() => {
       const self = net.entities.get(net.selfId);
       if (self && selfDead && !self.dead) { selfDead = false; matchHud.hideDeath(); cam.setDeathTilt(false); danger.reset(); vitals.reset(); }
-      matchHud.setScore(net.match.seScore, net.match.bugScore);
+
+      const ffa = net.match.mode === 'ffa';
+      // Scoreboard: TDM = team scores; FFA = your frags vs the current leader.
+      if (ffa) {
+        const board = [...net.entities.values()].map((e) => ({ name: e.name, frags: e.frags || 0, isSelf: e.id === net.selfId }))
+          .sort((a, b) => b.frags - a.frags);
+        matchHud.setFfaScore(board, net.selfId != null ? (net.entities.get(net.selfId)?.frags || 0) : 0);
+      } else {
+        matchHud.setScore(net.match.seScore, net.match.bugScore);
+      }
+
+      // v2.7: the ONLINE match-end RESULT overlay (this was never wired online —
+      // the SP-only match.onMatchEnd path is dead now, so the result screen never
+      // appeared). Drive it off the authoritative phase transition.
+      const over = net.match.phase === 'over';
+      if (over && !onlineEndShown) {
+        onlineEndShown = true;
+        if (ffa) {
+          const board = [...net.entities.values()].map((e) => ({ name: e.name, frags: e.frags || 0 })).sort((a, b) => b.frags - a.frags);
+          matchHud.showFfaEnd(board, net.match.winner, net.entities.get(net.selfId)?.name);
+        } else {
+          matchHud.showEnd({ winner: net.match.winner || 'draw', se: net.match.seScore, bug: net.match.bugScore });
+        }
+        if (!NOLOCK) document.exitPointerLock?.();
+      } else if (!over && onlineEndShown) {
+        onlineEndShown = false;
+        matchHud.hideEnd();
+      }
     });
   }
   const botAudioFx = new BotAudioFx(match, audio, 'se'); // positional enemy/ally footsteps (null-safe when match===null)
@@ -554,46 +586,32 @@ function boot() {
     menus.setLockHint('Browser blocked the mouse grab — wait a second, then click again.');
   };
 
-  menus.onPlay(() => {
-    // H1: resume the AudioContext inside the SAME click gesture that grabs
-    // pointer lock — this is the one and only moment the browser will honor it.
-    // Do it on BOTH paths (NOLOCK too) so headless/automation still boots audio.
+  // v2.7 ONLINE-ONLY: Play(mode) connects (once) into the chosen room type
+  // ('tdm'|'ffa'), then locks. If already connected to a DIFFERENT mode, leave
+  // and re-join the other type. `mode` comes from which Play button was clicked.
+  menus.onPlay((mode = 'tdm') => {
+    // H1: resume the AudioContext inside the SAME click gesture (only moment the
+    // browser honors it). On NOLOCK too so headless/automation boots audio.
     audio.unlock();
-    // PHASE 5 ONLINE: connect + quick-match first (joinOrCreate lands us in an
-    // open room, replacing a bot). Lock/state only after the join resolves.
-    if (ONLINE && net && !net.room) {
+
+    const join = () => {
       menus.setLockHint('Connecting…');
-      net.connect(SERVER_URL).then(() => {
+      net.connect(SERVER_URL, { mode }).then(() => {
         menus.setLockHint('');
         if (NOLOCK) setState('playing');
         else input.requestLock();
       }).catch(() => menus.setLockHint('Server unreachable — run `npm run server`.'));
+    };
+
+    if (!net.room) { join(); return; }        // first play → connect
+    if (net.mode !== mode) {                   // switching modes → re-join the other room type
+      net.disconnect();
+      join();
       return;
     }
-    // Restart (re-folding difficulty via getBotTuning) when Play begins a match
-    // that isn't already in progress:
-    //   • state 'over' — returned from the MENU button of a FINISHED match; Play
-    //     means a fresh round.
-    //   • NOT YET STARTED — the match was constructed at boot but never played, and
-    //     the difficulty may have been changed on the start screen since; restart
-    //     re-folds it so the FIRST match honours a start-screen pick (brief). This
-    //     is effect-free otherwise (everyone's already at spawn, score 0).
-    // A LIVE, in-progress (paused) match just resumes — never reset underfoot.
-    if (match && (match.state === 'over' || !matchStarted)) {
-      match.restart();
-      matchStarted = false;   // fresh, not-yet-started match again
-      danger.reset();
-      vitals.reset();
-      // restart() respawns the player with initial=true, which does NOT fire
-      // onPlayerRespawn — so clear the death cam + death overlay HERE too, or a
-      // match that ENDED on the player's own death would carry the ~18° roll +
-      // the frozen "TERMINATED" card into the fresh round (they're otherwise only
-      // cleared on a non-initial respawn).
-      cam.setDeathTilt(false);
-      if (matchHud) matchHud.hideDeath();
-    }
+    // Same mode, already connected (resume from pause / result screen).
     if (NOLOCK) { setState('playing'); return; }
-    input.requestLock(); // synchronous, inside the click gesture (A3)
+    input.requestLock();
   });
 
   // Match-end overlay buttons (§4B). PLAY AGAIN: restart the match, clear the

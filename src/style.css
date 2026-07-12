@@ -517,6 +517,51 @@ table.controls td:first-child {
 #chicken-counter.hidden { display: none; }
 #chicken-counter.pop { transform: translateX(-50%) scale(1.25); }
 
+/* ---- v2.7 FFA HUD: top-center frags board (mirrors #scoreboard layout) +
+   top-left live leaderboard + the FFA result leaderboard rows. ---- */
+#ffa-scoreboard {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-weight: 800;
+  font-size: 18px;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  user-select: none;
+}
+#ffa-scoreboard.hidden { display: none; }
+#ffa-scoreboard #ffa-clock { font-size: 26px; padding: 2px 12px; background: rgba(10, 14, 22, 0.55); border-radius: 8px; }
+#ffa-scoreboard #ffa-clock.urgent { color: #ff6f63; }
+#ffa-scoreboard #ffa-you { color: #9fe8d6; }
+#ffa-scoreboard #ffa-lead { color: #ffe08a; }
+
+#ffa-board {
+  position: absolute;
+  top: 46px;
+  left: 16px;
+  min-width: 150px;
+  font-size: 13px;
+  color: #e8eef7;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  user-select: none;
+}
+#ffa-board.hidden { display: none; }
+.ffa-row { display: flex; justify-content: space-between; gap: 10px; padding: 2px 8px; background: rgba(10, 14, 22, 0.42); border-radius: 4px; margin-bottom: 2px; }
+.ffa-row.self { background: rgba(60, 184, 158, 0.35); font-weight: 800; }
+
+#matchend-board { margin: 10px 0; }
+#matchend-board.hidden { display: none; }
+.me-row { display: flex; justify-content: space-between; gap: 24px; padding: 4px 14px; font-size: 16px; border-radius: 5px; margin: 2px 0; }
+.me-row.self { background: rgba(60, 184, 158, 0.35); font-weight: 800; }
+
+/* v2.7: the two front-door Play buttons stack with a small gap. */
+#play-buttons { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+#play-buttons .primary { width: 100%; }
+
 /* ---- Death / respawn overlay: darken + error-label "TERMINATED" moment +
    countdown. Non-interactive (inside #hud). JS toggles .hidden + the count. ---- */
 #death-overlay {

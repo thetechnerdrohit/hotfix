@@ -46,6 +46,7 @@ import { WEAPON_ID, TEAM_ID } from '../../src/net/protocol.js';
 
 const _v = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
+const EMPTY = Object.freeze([]); // v2.7: FFA has no allies — a shared empty list
 
 function yawToForward(yaw, out) {
   return out.set(-Math.sin(yaw), 0, -Math.cos(yaw));
@@ -114,54 +115,57 @@ export class ServerMatch {
    * @param {ReturnType<import('./worldLoader.js').loadWorld>} world
    * @param {number} nameSeed
    */
-  constructor(world, nameSeed = 0x1234abcd) {
+  constructor(world, opts = 0x1234abcd) {
+    // v2.7: opts is either a legacy numeric seed OR { mode, seed }. Normalize so
+    // existing callers (tests passing a bare seed) keep working.
+    const cfg = (typeof opts === 'object' && opts !== null) ? opts : { seed: opts };
+    const nameSeed = (cfg.seed ?? 0x1234abcd) >>> 0;
+    this.mode = cfg.mode === 'ffa' ? 'ffa' : 'tdm'; // 'tdm' (5v5 + bots) | 'ffa' (humans-only)
     this.world = world;
-    this.seed = nameSeed >>> 0; // v2.4: also seeds appearance (_makeSkin)
+    this.seed = nameSeed; // v2.4: also seeds appearance (_makeSkin)
     this.graph = world.graph;
     this.staticColliders = world.colliders;
     this.seSpawns = world.seSpawns;
     this.bugSpawns = world.bugSpawns;
+    // v2.7: FFA has no teams — everyone spawns from ONE combined pool.
+    this.allSpawns = [...(world.seSpawns || []), ...(world.bugSpawns || [])];
     this.tuning = getBotTuning();
-    this._dealers = makeNameDealers(nameSeed >>> 0);
+    this._dealers = makeNameDealers(nameSeed);
 
     // --- Build the bot roster with the REAL Bot class (headless scene stub) ---
     // scene only needs .add() (Bot ctor calls scene.add(bot.group)); we don't
     // render, so a no-op sink is fine.
     const scene = { add() {} };
-    const seNames = [];
-    for (let i = 0; i < MATCH.teamSize; i++) seNames.push(this._dealers.se.next());
-    const bugNames = [];
-    for (let i = 0; i < MATCH.teamSize; i++) bugNames.push(this._dealers.bug.next());
-
-    // NOTE: unlike single-player (player = 1 SE + 4 SE bots), the server fills
-    // BOTH teams fully with bots (5+5); humans then REPLACE bots on join. So we
-    // build 5 SE bots and 5 Bug bots. index seeds the LOS stagger across all 10.
     this.seBots = [];
     this.bugBots = [];
-    for (let i = 0; i < MATCH.teamSize; i++) {
-      const b = new Bot(seNames[i], 'se', this.graph, this.tuning, i);
-      scene.add(b.group);
-      this.seBots.push(b);
-    }
-    for (let i = 0; i < MATCH.teamSize; i++) {
-      const b = new Bot(bugNames[i], 'bug', this.graph, this.tuning, MATCH.teamSize + i);
-      scene.add(b.group);
-      this.bugBots.push(b);
-    }
-
-    // v2.4: give every bot a random appearance seed (uint16). The client derives
-    // the whole kour-style character from (skin, team) — see src/net/skins.js —
-    // so bots look varied too. Seeded off the room seed + id for determinism.
-    this._skinSeq = (this._nextHumanId ? 0 : 0);
-    for (const b of this.seBots) b.skin = this._makeSkin(b.id);
-    for (const b of this.bugBots) b.skin = this._makeSkin(b.id);
-
-    // --- Slots: one per roster position. slot.occupant is the LIVE combatant
-    //     (a Bot by default; a human PlayerEntity when a client holds the slot).
-    //     slot.bot is the bot that backfills when the human leaves. --------------
     this.slots = [];
-    for (let i = 0; i < this.seBots.length; i++) this.slots.push(this._makeSlot(this.seBots[i], 'se'));
-    for (let i = 0; i < this.bugBots.length; i++) this.slots.push(this._makeSlot(this.bugBots[i], 'bug'));
+
+    if (this.mode === 'tdm') {
+      // TDM: fill BOTH teams fully with bots (5+5); humans REPLACE bots on join,
+      // bots backfill on leave. index seeds the LOS stagger across all 10.
+      const seNames = [];
+      for (let i = 0; i < MATCH.teamSize; i++) seNames.push(this._dealers.se.next());
+      const bugNames = [];
+      for (let i = 0; i < MATCH.teamSize; i++) bugNames.push(this._dealers.bug.next());
+      for (let i = 0; i < MATCH.teamSize; i++) {
+        const b = new Bot(seNames[i], 'se', this.graph, this.tuning, i);
+        scene.add(b.group);
+        this.seBots.push(b);
+      }
+      for (let i = 0; i < MATCH.teamSize; i++) {
+        const b = new Bot(bugNames[i], 'bug', this.graph, this.tuning, MATCH.teamSize + i);
+        scene.add(b.group);
+        this.bugBots.push(b);
+      }
+      // v2.4: random appearance seed per bot (client derives the body from it).
+      for (const b of this.seBots) b.skin = this._makeSkin(b.id);
+      for (const b of this.bugBots) b.skin = this._makeSkin(b.id);
+      for (let i = 0; i < this.seBots.length; i++) this.slots.push(this._makeSlot(this.seBots[i], 'se'));
+      for (let i = 0; i < this.bugBots.length; i++) this.slots.push(this._makeSlot(this.bugBots[i], 'bug'));
+    }
+    // FFA: NO bots, NO pre-seeded slots — a slot is created per human join
+    // (addHuman) and removed on leave. The room starts empty (0 fighters).
+    this._scene = scene; // kept for parity; FFA creates no bots
 
     // Humans keyed by sessionId → HumanCtx.
     this.humans = new Map();
@@ -238,6 +242,8 @@ export class ServerMatch {
   // HumanCtx (its entity.id is the stable network id) or null if the room is
   // somehow full (should not happen; the room caps at maxClients).
   addHuman(sessionId, name) {
+    if (this.mode === 'ffa') return this._addHumanFfa(sessionId, name);
+
     const seHumans = this.slots.filter((s) => s.team === 'se' && s.occupant !== s.bot).length;
     const bugHumans = this.slots.filter((s) => s.team === 'bug' && s.occupant !== s.bot).length;
     const team = seHumans <= bugHumans ? 'se' : 'bug';
@@ -250,6 +256,27 @@ export class ServerMatch {
       return this._occupy(other, sessionId, name);
     }
     return this._occupy(slot, sessionId, name);
+  }
+
+  // v2.7 FFA join: no bot to replace — ADD a brand-new slot for this human.
+  // Everyone is on the sentinel team 'ffa' (teams don't group; scoring is the
+  // per-player `frags` field). Capped at MATCH.ffaMaxPlayers (room guards too).
+  _addHumanFfa(sessionId, name) {
+    if (this.humans.size >= MATCH.ffaMaxPlayers) return null;
+    const ctx = new HumanCtx(this._nextHumanId(), 'ffa', this.allSpawns[0].pos);
+    ctx.sessionId = sessionId;
+    ctx.entity.name = name || this._dealers.se.next();
+    ctx.entity.skin = this._makeSkin(ctx.entity.id);
+    ctx.entity.frags = 0; // v2.7 per-player score (FFA)
+    this._wireHumanHooks(ctx);
+
+    const slot = { team: 'ffa', bot: null, occupant: ctx.entity, human: ctx, spawns: this.allSpawns };
+    this.slots.push(slot);
+    this.humans.set(sessionId, ctx);
+
+    this._rebuildRosters();
+    this._spawnCombatant(ctx.entity, slot, true);
+    return ctx;
   }
 
   _occupy(slot, sessionId, name) {
@@ -279,7 +306,8 @@ export class ServerMatch {
     return ctx;
   }
 
-  // Human leaves → a BOT backfills the slot (match never loses a fighter).
+  // Human leaves. TDM → a BOT backfills the slot (match never loses a fighter).
+  // FFA → the slot is REMOVED (no bots; the arena just has one fewer fighter).
   removeHuman(sessionId) {
     const ctx = this.humans.get(sessionId);
     if (!ctx) return;
@@ -287,7 +315,14 @@ export class ServerMatch {
     this.humans.delete(sessionId);
     if (!slot) return;
 
-    // Backfill: the slot's bot re-enters at a safe spawn.
+    if (this.mode === 'ffa') {
+      const i = this.slots.indexOf(slot);
+      if (i >= 0) this.slots.splice(i, 1);
+      this._rebuildRosters();
+      return;
+    }
+
+    // TDM backfill: the slot's bot re-enters at a safe spawn.
     slot.occupant = slot.bot;
     slot.human = null;
     this._rebuildRosters();
@@ -372,7 +407,10 @@ export class ServerMatch {
   // KILL / SCORE (F1/F2/F3)
   // ==========================================================================
   _onKilled(victim, killer, isHead) {
-    if (killer && killer.team && killer.team !== victim.team) {
+    if (this.mode === 'ffa') {
+      // FFA: credit the killer's PERSONAL frag count (no self-kills, no teams).
+      if (killer && killer !== victim) killer.frags = (killer.frags || 0) + 1;
+    } else if (killer && killer.team && killer.team !== victim.team) {
       this.scores[killer.team] += 1;
     }
     this.events.push({
@@ -411,21 +449,38 @@ export class ServerMatch {
 
   _checkWin() {
     if (this.state === 'over') return;
-    if (this.scores.se >= MATCH.killTarget || this.scores.bug >= MATCH.killTarget) this._endMatch();
+    if (this.mode === 'ffa') {
+      // FFA: only a positive frag-limit ends early (0 = timer decides, Rohit).
+      if (MATCH.ffaFragLimit > 0) {
+        for (const c of this.allCombatants) if ((c.frags || 0) >= MATCH.ffaFragLimit) return this._endMatch();
+      }
+      return;
+    }
+    // TDM: only a positive killTarget ends early (0 = timer decides).
+    if (MATCH.killTarget > 0 && (this.scores.se >= MATCH.killTarget || this.scores.bug >= MATCH.killTarget)) this._endMatch();
   }
 
   _endMatch() {
     this.state = 'over';
-    let winner;
-    if (this.scores.se > this.scores.bug) winner = 'se';
-    else if (this.scores.bug > this.scores.se) winner = 'bug';
-    else winner = 'draw';
-    this.result = { winner, se: this.scores.se, bug: this.scores.bug };
+    if (this.mode === 'ffa') {
+      // Leaderboard = every fighter sorted by frags desc; winner = top.
+      const board = this.allCombatants
+        .map((c) => ({ id: c.id, name: c.name, frags: c.frags || 0 }))
+        .sort((a, b) => b.frags - a.frags);
+      this.result = { mode: 'ffa', leaderboard: board, winnerName: board.length ? board[0].name : '' };
+    } else {
+      let winner;
+      if (this.scores.se > this.scores.bug) winner = 'se';
+      else if (this.scores.bug > this.scores.se) winner = 'bug';
+      else winner = 'draw';
+      this.result = { mode: 'tdm', winner, se: this.scores.se, bug: this.scores.bug };
+    }
     this._overHold = MATCH.restartDelay;
   }
 
   restart() {
     this.scores.se = 0; this.scores.bug = 0;
+    for (const c of this.allCombatants) if (c) c.frags = 0; // v2.7 reset FFA frags
     this.clock = MATCH.timeLimit;
     this.state = 'live';
     this.result = null;
@@ -434,8 +489,22 @@ export class ServerMatch {
     this._spawnEveryone();
   }
 
-  _enemiesTeamOf(c) { return c.team === 'se' ? this.bugTeam : this.seTeam; }
-  _alliesTeamOf(c) { return c.team === 'se' ? this.seTeam : this.bugTeam; }
+  // TDM: enemies = the opposing team. FFA: enemies = EVERYONE else (no teams),
+  // allies = nobody. `_ffaEnemyScratch` is rebuilt per call (small N); it excludes
+  // `c` itself. Callers already filter dead/protected downstream.
+  _enemiesTeamOf(c) {
+    if (this.mode === 'ffa') {
+      const out = this._ffaEnemyScratch || (this._ffaEnemyScratch = []);
+      out.length = 0;
+      for (const other of this.allCombatants) if (other !== c) out.push(other);
+      return out;
+    }
+    return c.team === 'se' ? this.bugTeam : this.seTeam;
+  }
+  _alliesTeamOf(c) {
+    if (this.mode === 'ffa') return EMPTY; // FFA has no allies
+    return c.team === 'se' ? this.seTeam : this.bugTeam;
+  }
 
   // ==========================================================================
   // ROSTER + TARGET LIST rebuild (F10: protection-by-exclusion)
@@ -445,7 +514,8 @@ export class ServerMatch {
     this.bugTeam.length = 0;
     this.allCombatants.length = 0;
     for (const s of this.slots) {
-      (s.team === 'se' ? this.seTeam : this.bugTeam).push(s.occupant);
+      // FFA: no team arrays (everyone's in allCombatants; enemies computed live).
+      if (this.mode !== 'ffa') (s.team === 'se' ? this.seTeam : this.bugTeam).push(s.occupant);
       this.allCombatants.push(s.occupant);
     }
     // Ensure per-bot lists exist for every current bot occupant.
@@ -489,6 +559,11 @@ export class ServerMatch {
       const c = s.occupant;
       if (c === selfEntity || c.dead) continue;
       if (c instanceof Bot && !c.group.visible) continue;
+      // v2.7: FFA grows the roster past the initial pool size (players join
+      // without replacing a bot), so extend the AABB pool on demand.
+      if (poolIdx >= this._colliderPool.length) {
+        this._colliderPool.push({ min: new THREE.Vector3(), max: new THREE.Vector3() });
+      }
       const slot = this._colliderPool[poolIdx++];
       if (c instanceof Bot) {
         c.writeCollider(slot);
