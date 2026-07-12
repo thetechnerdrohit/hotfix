@@ -442,6 +442,46 @@ export const TARGETS = {
 // is GAME-TIME (counts down off clamped dt, pause-safe, B6) — never wall-clock.
 // Respawn + spawn-protection windows tick the same way (F10, §4B death/respawn).
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// PROPS — v2.3 world toys (kour.io flavor). Two independent, self-contained
+// systems driven by BOTH the SP Match and the authoritative ServerMatch:
+//   • CHICKENS — roaming 1-HP critters. Shooting one gives PERSONAL points (a
+//     private counter in the HUD + a feed line); it NEVER touches team TDM
+//     score, so 5v5 balance stays honest. They wander on a slow random walk,
+//     bounce off world colliders, and respawn after a short delay.
+//   • FOOTBALL — one kickable sphere. Hand-rolled physics (gravity + ground
+//     bounce + rolling friction + a wall-slide resolve against colliders) — NOT
+//     a physics engine (CLAUDE.md: none for core movement/props). The player
+//     (and bots) nudge it by walking into it; a bullet gives it a shove.
+// All motion is game-dt driven (B6) and zero-alloc on the hot path (I1).
+// ---------------------------------------------------------------------------
+export const PROPS = {
+  chickens: {
+    count: 8,              // roaming chickens on the map at once
+    points: 25,            // personal points per chicken shot
+    hp: 1,                 // one shot kills
+    respawnDelay: 6.0,     // s before a shot chicken reappears elsewhere
+    wanderSpeed: 1.6,      // m/s stroll
+    turnEveryMin: 1.2,     // s — pick a new heading no sooner than this
+    turnEveryMax: 3.5,     // s — …and no later than this
+    bodyRadius: 0.28,      // m — hit AABB half-width + collider-avoid radius
+    bodyHeight: 0.42,      // m — hit AABB height
+    headRadius: 0.16,      // m — head sphere (a clean shot reads as a "kill")
+    headYFrac: 0.78,       // head center height as a fraction of bodyHeight
+  },
+  football: {
+    enabled: true,
+    radius: 0.22,          // m
+    gravity: 18,           // m/s² downward
+    restitution: 0.55,     // ground bounce energy kept
+    rollFriction: 1.4,     // 1/s exp velocity decay while rolling (B2)
+    kickSpeed: 4.5,        // m/s imparted when a body walks into it
+    shotImpulse: 7.0,      // m/s imparted along the bullet dir on a hit
+    maxSpeed: 16,          // clamp so a shot can't fling it across the map
+    spawnHeight: 0.6,      // m drop-in height at (re)spawn
+  },
+};
+
 export const MATCH = {
   teamSize: 5,             // 5 SE (you + 4 bots) vs 5 Bugs (bots)
   killTarget: 30,          // first team to this many enemy kills wins

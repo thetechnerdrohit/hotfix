@@ -30,10 +30,11 @@
 // ============================================================================
 
 import * as THREE from 'three';
-import { MATCH, getBotTuning } from '../config.js';
+import { MATCH, PROPS, getBotTuning } from '../config.js';
 import { applyDamage } from '../combat/damage.js';
 import { buildBots } from './bots.js';
 import { makeNameDealers } from './names.js';
+import { PropsManager } from './props.js';
 
 // Phase 4: team spawns are no longer hard-coded here — the MAP owns them (both
 // world/prodMap.js and world/testRoom.js return { seSpawns, bugSpawns } where
@@ -133,6 +134,22 @@ export class Match {
     }
     this.dynamicColliders = staticColliders.slice(); // starts as a copy of the statics
     this._staticCount = staticColliders.length;
+
+    // --- v2.3 PROPS: roaming chickens (personal points) + a kickable football.
+    // Self-contained sim owned here; chickens are appended to the player target
+    // list each rebuild so the stock hitscan hits them. A chicken kill fires the
+    // PERSONAL score callback (onChickenScore) — it NEVER touches team scores.
+    this.props = new PropsManager({ colliders: staticColliders, seSpawns: this.seSpawns, bugSpawns: this.bugSpawns }, scene, this._nameSeed);
+    this.chickenScore = 0;             // player's personal chicken tally
+    this.onChickenScore = null;        // (total, gained) => HUD counter + feed
+    this.props.onChickenKilled = (chicken, source) => {
+      // Only the PLAYER's shots score (bots ignore chickens as targets). If a bot
+      // ever kills one, source !== player and we simply don't award points.
+      if (source === this.player) {
+        this.chickenScore += PROPS.chickens.points;
+        if (this.onChickenScore) this.onChickenScore(this.chickenScore, PROPS.chickens.points);
+      }
+    };
 
     // --- Events (nullable; frontend wires) ---------------------------------
     this.onKillFeed = null;      // ({ killerName, killerTeam, victimName, victimTeam, weapon, isHead })
@@ -383,6 +400,10 @@ export class Match {
         );
       }
 
+      // v2.3 props: chickens wander + respawn, football rolls; the football is
+      // nudged by every living combatant it touches (player + bots).
+      this.props.update(dt, this.allCombatants);
+
       // Advance the clock; time expiry ends the match (higher score wins, tie=draw).
       this.clock = Math.max(0, this.clock - dt);
       if (this.clock <= 0) this._endMatch();
@@ -447,6 +468,14 @@ export class Match {
     for (let i = 0; i < this.bugBots.length; i++) {
       const b = this.bugBots[i];
       if (!b.dead && !(b.protectedUntil > gt)) pe.push(b);
+    }
+    // v2.3: living chickens ride the SAME player target list so the stock
+    // hitscan hits them (they expose the head/body hit surface). They carry their
+    // own applyDamage (1-shot → personal points), so a hit never enters the team
+    // applyDamage/onKilled combat path — no friendly-fire or score interaction.
+    const chickens = this.props.chickens;
+    for (let i = 0; i < chickens.length; i++) {
+      if (!chickens[i].dead) pe.push(chickens[i]);
     }
 
     // Per-bot enemy + ally lists.

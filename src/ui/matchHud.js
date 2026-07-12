@@ -248,5 +248,6 @@ function teamColor(team) {
 // "killed"). Knife gets a blade, guns get a bullet-ish mark.
 function weaponGlyph(weapon) {
   if (weapon === 'knife') return ' 🔪 ';
+  if (weapon === 'chicken') return ' 🐔 '; // v2.3 personal chicken point
   return ' ✕ ';
 }

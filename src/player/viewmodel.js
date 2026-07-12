@@ -35,14 +35,38 @@ function box(w, h, d, x, y, z, color, rx = 0, ry = 0, rz = 0) {
   return m;
 }
 
-// v1.1 LOOKS: first-person hand/forearm hints in the palette's skin/glove tone —
-// two small boxes gripping the weapon so the player's hands read on screen. Pure
-// cosmetic children of the weapon rig; they do NOT move the muzzle anchor.
+// v2.3 LOOKS (kour.io pass): chunky gloved arms. Each "hand" is a blocky gloved
+// fist (a fist box + a knuckle cap) plus a substantial forearm box angled in from
+// the lower corner of the view. Two of these per gun (REAR grip + FRONT support)
+// read as two-handed like the reference. Pure cosmetic children of the weapon rig;
+// they never move the muzzle anchor.
+//
+// _fistArm builds one gripping hand+forearm at (hx,hy,hz). The forearm is a
+// separate chunky box that recedes DOWN-AND-BACK toward the lower-right corner of
+// the view (the kour.io single-shoulder look — both arms come in from the same
+// bottom-right corner, not opposite corners). foreLen lets the FRONT support arm
+// use a shorter/steeper forearm so it stays a distinct hand and doesn't merge with
+// the rear forearm into one slab.
+function _fistArm(g, color, hx, hy, hz, forePitch = 0.55, foreYaw = 0.28, foreLen = 0.24) {
+  // Gloved fist: a chunky box + a small knuckle cap so it reads as a wrapped hand.
+  g.add(box(0.075, 0.075, 0.085, hx, hy, hz, color));
+  g.add(box(0.078, 0.030, 0.088, hx, hy + 0.045, hz, color)); // knuckle ridge
+  // Forearm: recedes toward the lower-RIGHT corner (+x, −y, +z from the fist).
+  const fx = hx + 0.05;
+  const fy = hy - 0.07;
+  const fz = hz + foreLen * 0.5;
+  g.add(box(0.07, 0.07, foreLen, fx, fy, fz, color, forePitch, foreYaw, -0.14));
+}
+
+// Two-handed grip helper: a REAR trigger hand at the grip and a clearly SEPARATE
+// FRONT support hand wrapping the foregrip further down the barrel (foreZ), each a
+// distinct chunky gloved fist with its own forearm angling down toward the
+// bottom-right — the kour.io two-handed silhouette. The front hand gets a shorter,
+// steeper forearm so the two hands read as two, not one block. Cosmetic only
+// (muzzle untouched).
 function addHands(g, color, gripX, gripY, gripZ, foreZ) {
-  // Rear hand at the grip, forearm angled back toward the shoulder.
-  g.add(box(0.06, 0.06, 0.10, gripX, gripY, gripZ, color, 0.5, 0, 0));
-  // Front/support hand further down the barrel.
-  g.add(box(0.06, 0.055, 0.09, gripX * 0.4, gripY + 0.005, foreZ, color, 0.3, 0, 0));
+  _fistArm(g, color, gripX, gripY, gripZ, 0.6, 0.26, 0.26);            // rear trigger hand (long forearm)
+  _fistArm(g, color, gripX + 0.005, gripY + 0.015, foreZ, 0.42, 0.34, 0.15); // front support hand (short, distinct)
 }
 
 export class Viewmodel {
@@ -85,8 +109,9 @@ export class Viewmodel {
   // Local space: +x right, +y up, −z forward (camera-local). The muzzle anchor
   // sits at the forward tip so getMuzzleWorldPos points at the barrel.
 
-  // v1.1 LOOKS: each weapon upgraded from a single box to a convincing low-poly
-  // silhouette (receiver/barrel/sight/mag/stock etc.) + hand hints. The muzzle
+  // v1.1/v2.3 LOOKS: each weapon is a convincing low-poly silhouette
+  // (receiver/barrel/sight/mag/stock etc.) + chunky gloved arms (kour.io pass:
+  // two-handed grip on rifle/pistol, blade-forward fist on the knife). The muzzle
   // anchor local position is UNCHANGED from v1.0 (the getMuzzleWorldPos contract
   // the FX layer relies on — tracers/flash start there), so the added detail is
   // purely visual and the shot truth (camera ray) is untouched.
@@ -137,7 +162,9 @@ export class Viewmodel {
     pose.add(box(0.07, 0.022, 0.045, 0, -0.005, 0.0, 0x1b2030)); // guard (crossbar)
     pose.add(box(0.028, 0.055, 0.34, 0, 0.0, -0.17, 0xcdd6e6));  // blade spine (longer)
     pose.add(box(0.006, 0.058, 0.34, 0.015, 0.0, -0.17, 0xeef3fb)); // edge bevel
-    addHands(pose, CHARACTER.handColorKnife, 0.0, -0.09, 0.07, 0.02);
+    // Single substantial gripping fist wrapped around the handle (blade-forward in
+    // a fist — NOT a two-handed hold). Forearm sweeps out to the lower corner.
+    _fistArm(pose, CHARACTER.handColorKnife, 0.0, -0.08, 0.06, 0.5, 0.3, 0.24);
     const muzzle = new THREE.Object3D(); // "muzzle" = blade tip (flash anchor; tracer n/a)
     muzzle.position.set(0, 0.0, -0.36); // rides the posed blade tip
     pose.add(muzzle);

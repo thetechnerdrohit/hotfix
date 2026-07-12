@@ -555,7 +555,10 @@ export class WeaponSystem {
     }
 
     if (this.onShotResolved) {
-      this.onShotResolved({ result: _hit, killed, isHead, damage, weapon: this.active });
+      // origin/_dir are the live shot ray (module scratch) — passed so a listener
+      // can do ray-adjacent effects (v2.3: shove the football along the bullet).
+      // Both are reused; consumers must copy synchronously (same contract as _hit).
+      this.onShotResolved({ result: _hit, killed, isHead, damage, weapon: this.active, origin: _origin, dir: _dir });
     }
   }
 

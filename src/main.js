@@ -17,6 +17,7 @@ import { buildTestRoom } from './world/testRoom.js';
 import { buildProdMap } from './world/prodMap.js';
 import { buildShootsMap } from './world/shootsMap.js';
 import { buildBattleMap } from './world/battleMap.js';
+import { buildHavanaMap } from './world/havanaMap.js';
 import { buildTargets } from './world/targets.js';
 import { makeGraph } from './world/waypoints.js';
 import { WeaponSystem } from './combat/weapons.js';
@@ -164,9 +165,11 @@ function boot() {
   // v2.0: the Battleground (compound + fields + camps + great trees) is the
   // shipped map; the compound-only arena stays at DEV ?room=shoots.
   const WANT_SHOOTS = import.meta.env.DEV && params.get('room') === 'shoots';
+  const WANT_HAVANA = import.meta.env.DEV && params.get('room') === 'havana';
   const room = WANT_TEST_ROOM ? buildTestRoom()
     : WANT_PROD ? buildProdMap()
     : WANT_SHOOTS ? buildShootsMap()
+    : WANT_HAVANA ? buildHavanaMap()
     : buildBattleMap();
 
   const scene = new THREE.Scene();
@@ -338,7 +341,12 @@ function boot() {
   // world-only decals, the hit-confirm tick/ding, and the hitmarker. CRITICAL:
   // `result` is a SHARED reused object — copy point/normal into our pooled
   // scratch synchronously, right here, before it's overwritten by the next shot.
-  weapons.onShotResolved = ({ result, isHead, weapon }) => {
+  weapons.onShotResolved = ({ result, isHead, weapon, origin, dir }) => {
+    // v2.3: a gun shot can shove the football (checked against the ray up to the
+    // hit distance, or a long reach if the shot hit nothing). Knife excluded.
+    if (match && weapon !== 'knife') {
+      match.props.onShotRay(origin, dir, result.hitSomething ? result.dist : 1000);
+    }
     if (!result.hitSomething) return;
     _hitPoint.copy(result.point);            // copy NOW (result.point is reused)
     const normalAxis = result.normalAxis;    // primitives — safe to read directly
@@ -439,6 +447,19 @@ function boot() {
     // -- Scoreboard + kill feed (G7). 'you' appears verbatim in the feed.
     match.onScoreChanged = (se, bug) => matchHud.setScore(se, bug);
     match.onKillFeed = (entry) => matchHud.addKill(entry);
+
+    // -- v2.3 personal chicken tally: reveal + bump the counter, pop the badge,
+    //    and drop a feed line. This is PERSONAL points, never the team score.
+    const chickenEl = document.getElementById('chicken-counter');
+    const chickenNumEl = document.getElementById('chicken-count');
+    match.onChickenScore = (total /*, gained */) => {
+      chickenEl.classList.remove('hidden');
+      chickenNumEl.textContent = String(total);
+      chickenEl.classList.add('pop');
+      // Drop the pop next frame (transform-only, no timer — G2/B6-friendly).
+      requestAnimationFrame(() => requestAnimationFrame(() => chickenEl.classList.remove('pop')));
+      matchHud.addKill({ killerName: 'you', killerTeam: 'se', victimName: 'chicken', victimTeam: null, weapon: 'chicken', isHead: false });
+    };
 
     // -- Player death → respawn overlay + the death CAM (§4B deferred item): a
     //    short drop + roll eased into the RENDERED view only (cam owns the ease;
