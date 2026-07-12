@@ -10,13 +10,13 @@ export const COMBAT = {
     body: 34, headMult: 3, // canon: 3 body shots, or 1 headshot
     mode: 'auto', fireInterval: 0.100, magSize: 30, reserve: 90,
     reloadTime: 2.2, raiseTime: 0.45,
-    spreadBase: 0.3, bloomPerShot: 0.25, recoilPerShot: 0.45,
+    spreadBase: 0.3, bloomPerShot: 0.25, recoilPerShot: 0.62, recoilRamp: 0.06, recoilRampMax: 2.0,
   },
   pistol: {
     body: 25, headMult: 2, // canon: 4 body, or 2 head
     mode: 'semi', fireInterval: 0.130, magSize: 12, reserve: 36,
     reloadTime: 1.8, raiseTime: 0.35,
-    spreadBase: 0.2, bloomPerShot: 0.15, recoilPerShot: 0.3,
+    spreadBase: 0.2, bloomPerShot: 0.15, recoilPerShot: 0.5, recoilRamp: 0, recoilRampMax: 1,
   },
   knife: {
     body: 50, backstab: 100, // canon: 2 front hits; backstab = instakill
@@ -25,6 +25,13 @@ export const COMBAT = {
     hitPad: 0.25, // body AABB expanded by this before the knife ray tests it — generous in the skilled direction (E13/§4B)
   },
   headRadius: 0.18,
+  // v2.1 (Rohit): WEAPON WEIGHT — the carried weapon scales run speed. Rifle is
+  // heavy (slower), pistol light, knife fastest (the CS mold). Composes with
+  // the ADS move multiplier; both are plain factors on the target top speed.
+  moveScale: { rifle: 0.92, pistol: 1.0, knife: 1.09 },
+  // v2.1: AUTO-RELOAD (flips the §4D default per Rohit) — an empty-mag fire
+  // attempt dry-clicks once, then starts the reload by itself.
+  autoReload: true,
   sprintOutTime: 0.15,
   semiBufferMs: 60,
 
@@ -466,6 +473,7 @@ export const MATCH = {
 // All time knobs are SECONDS unless the name ends in Ms/Deg.
 // ---------------------------------------------------------------------------
 export const BOTS = {
+  highGroundBias: 2.5, // v2.1 — patrol weight multiplier for climbing links (bots contest decks/roofs)
   difficulty: 'normal',    // 'easy' | 'normal' | 'hard' — shell sets before match start
 
   // -- Movement (kinematic; no physics engine; y graph-locked via yLerp, K6) --

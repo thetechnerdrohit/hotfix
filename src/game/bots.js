@@ -904,7 +904,24 @@ export class Bot {
       this.curNode = this.targetNode;
       const links = arrivedNode.links;
       if (links.length > 0) {
-        this.targetNode = links[(Math.random() * links.length) | 0];
+        // v2.1 HIGH-GROUND BIAS (Rohit's tactical-contest ask): neighbors that
+        // CLIMB get extra weight, so bots patrol up ramps/decks and contest
+        // elevated positions instead of ignoring them. Weight = 1 + bias×Δy⁺
+        // (descents keep weight 1 — bots don't avoid coming back down).
+        const here = arrivedNode.pos.y;
+        let total = 0;
+        for (let i = 0; i < links.length; i++) {
+          const dy = this.graph.nodes[links[i]].pos.y - here;
+          total += 1 + (dy > 0.3 ? (this.tuning.highGroundBias ?? 2.5) : 0);
+        }
+        let pick = Math.random() * total;
+        let chosen = links[links.length - 1];
+        for (let i = 0; i < links.length; i++) {
+          const dy = this.graph.nodes[links[i]].pos.y - here;
+          pick -= 1 + (dy > 0.3 ? (this.tuning.highGroundBias ?? 2.5) : 0);
+          if (pick <= 0) { chosen = links[i]; break; }
+        }
+        this.targetNode = chosen;
       }
     }
   }

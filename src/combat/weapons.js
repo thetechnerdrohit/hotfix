@@ -270,7 +270,9 @@ export class WeaponSystem {
     // (no-op) and no suppression, so non-ADS movement is byte-identical.
     if (controller) {
       if (this.adsActive) controller.suppressSprint(COMBAT.sprintOutTime);
-      controller.speedScale = 1 + (ADS.moveMult - 1) * this.adsBlend;
+      // v2.1 WEAPON WEIGHT × ADS: both plain factors on the target top speed.
+      const weight = (COMBAT.moveScale && COMBAT.moveScale[this.active]) ?? 1;
+      controller.speedScale = (1 + (ADS.moveMult - 1) * this.adsBlend) * weight;
     }
   }
 
@@ -470,6 +472,9 @@ export class WeaponSystem {
       this.fireCooldown = spec.fireInterval;
       this._cancelBufferedFire();
       if (this.onDryFire) this.onDryFire(this.active);
+      // v2.1 AUTO-RELOAD (Rohit; flips §4D): the dry click plays, then the
+      // reload starts by itself — same atomic path as R (E10 untouched).
+      if (COMBAT.autoReload && a.reserve > 0 && this.state === 'ready') this._requestReload();
       return;
     }
 
@@ -498,7 +503,14 @@ export class WeaponSystem {
     // the camera. Bloom grows AFTER this shot so the shot just fired used the
     // pre-bloom cone (first-shot-exact holds).
     if (this.onFire) {
-      this.onFire({ weapon: this.active, spreadRad, recoilDeg: (spec.recoilPerShot ?? 0) * this.adsRecoilMult() });
+      // v2.1 per-gun recoil ramp: sustained fire kicks progressively harder
+      // (recoilRamp per consecutive shot, capped at recoilRampMax ×). The ramp
+      // state rides the bloom decay — when bloom is fully recovered the burst
+      // counter resets (first-shot recoil = base again).
+      if (this.bloom <= 0.001) this._burstShots = 0;
+      const ramp = Math.min(spec.recoilRampMax ?? 1, 1 + (spec.recoilRamp ?? 0) * (this._burstShots ?? 0));
+      this._burstShots = (this._burstShots ?? 0) + 1;
+      this.onFire({ weapon: this.active, spreadRad, recoilDeg: (spec.recoilPerShot ?? 0) * ramp * this.adsRecoilMult() });
     }
     if (!isKnife) {
       this.bloom = Math.min((COMBAT.maxBloom ?? 1.4), this.bloom + (spec.bloomPerShot ?? 0));
