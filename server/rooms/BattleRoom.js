@@ -180,8 +180,10 @@ export class BattleRoom extends Room {
     for (const ev of evs) {
       if (ev.kind === 'kill') {
         out.push({ t: EV.KILL, k: ev.killerName, kt: ev.killerTeam ? TEAM_ID[ev.killerTeam] : 255,
-          v: ev.victimName, vt: TEAM_ID[ev.victimTeam], w: WEAPON_ID[ev.weapon] ?? 0, h: ev.isHead ? 1 : 0, id: ev.victimId });
-        out.push({ t: EV.DEATH, id: ev.victimId, kt: ev.killerTeam ? TEAM_ID[ev.killerTeam] : 255, h: ev.isHead ? 1 : 0 });
+          v: ev.victimName, vt: TEAM_ID[ev.victimTeam], w: WEAPON_ID[ev.weapon] ?? 0, h: ev.isHead ? 1 : 0,
+          id: ev.victimId, ki: ev.killerId ?? 0 }); // ki = killerId (v2.5 positional/self kill audio)
+        out.push({ t: EV.DEATH, id: ev.victimId, kt: ev.killerTeam ? TEAM_ID[ev.killerTeam] : 255, h: ev.isHead ? 1 : 0,
+          k: ev.killerName, w: WEAPON_ID[ev.weapon] ?? 0 }); // killer name/weapon for the death overlay
       } else if (ev.kind === 'shot') {
         out.push({ t: EV.SHOT, id: ev.id, x: ev.x, y: ev.y, z: ev.z });
       } else if (ev.kind === 'hit') {

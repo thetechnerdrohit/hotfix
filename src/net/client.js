@@ -241,8 +241,30 @@ export class NetClient {
   }
 
   _decodeEvents(evs) {
-    // Pass through with the EV kind tags intact; main.js switches on t.
-    return evs;
+    // Expand the compact wire fields (k/kt/v/vt/w/h/id/ki/by/x/y/z) into the
+    // friendly names main.js reads. KILL/DEATH carry killer/victim names+teams;
+    // SHOT carries a world pos; HIT carries the victim id. v2.5 adds killerId
+    // (ki) for positional/self kill audio.
+    const out = [];
+    for (const ev of evs) {
+      if (ev.t === EV.KILL) {
+        out.push({ t: EV.KILL,
+          killerName: ev.k, killerTeam: ev.kt === 255 ? null : TEAM_NAME[ev.kt],
+          victimName: ev.v, victimTeam: TEAM_NAME[ev.vt],
+          weapon: WEAPON_NAME[ev.w] || 'rifle', isHead: !!ev.h,
+          id: ev.id, killerId: ev.ki ?? 0 });
+      } else if (ev.t === EV.DEATH) {
+        out.push({ t: EV.DEATH, id: ev.id, killerTeam: ev.kt === 255 ? null : TEAM_NAME[ev.kt], isHead: !!ev.h,
+          killerName: ev.k, weapon: WEAPON_NAME[ev.w] || 'rifle' });
+      } else if (ev.t === EV.SHOT) {
+        out.push({ t: EV.SHOT, id: ev.id, x: ev.x, y: ev.y, z: ev.z });
+      } else if (ev.t === EV.HIT) {
+        out.push({ t: EV.HIT, id: ev.id, by: this.selfId }); // HIT is sent only to the shooter
+      } else {
+        out.push(ev);
+      }
+    }
+    return out;
   }
 }
 

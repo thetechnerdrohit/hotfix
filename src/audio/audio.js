@@ -510,6 +510,16 @@ export class AudioEngine {
     }
   }
 
+  // v2.5: a POSITIONAL kill cue for SOMEONE ELSE's kill — the killConfirm timbre
+  // but panned + distance-attenuated at the kill location (x,y,z), softer than
+  // your own centered killConfirm so you can tell "I killed" from "a kill over
+  // there". Your own kill still uses the centered killConfirm() (main.js routes).
+  killAt(x, y, z) {
+    if (!this.ready) return;
+    this._toneAt(x, y, z, { wave: 'triangle', freq: 520, toFreq: 300, peak: 0.24, attack: 0.002, decay: 0.16 });
+    this._toneAt(x, y, z, { wave: 'sine', freq: 780, toFreq: 500, peak: 0.16, attack: 0.002, decay: 0.14 });
+  }
+
   // A single positional footstep tick. `enemy` picks the (loud vs quiet) gain
   // (§4B). Globally throttled + voice-cap-aware by the CALLER (footstep()); this
   // is the raw sound. A short filtered-noise scuff, low and soft.

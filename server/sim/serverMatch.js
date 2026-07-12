@@ -384,6 +384,7 @@ export class ServerMatch {
       weapon: this._weaponOf(killer),
       isHead: !!isHead,
       victimId: victim.id,
+      killerId: killer ? (killer.id ?? 0) : 0, // v2.5: for positional/self kill audio
     });
     // Schedule respawn (bots + humans both respawn after the delay).
     if (victim instanceof Bot) {

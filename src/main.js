@@ -170,11 +170,15 @@ function boot() {
   // shipped map; the compound-only arena stays at DEV ?room=shoots.
   const WANT_SHOOTS = import.meta.env.DEV && params.get('room') === 'shoots';
   const WANT_HAVANA = import.meta.env.DEV && params.get('room') === 'havana';
+  // v2.5: the DEFAULT (and online) map is Havana — the server loads it too, so
+  // the client renders the same geometry the authoritative sim uses. The other
+  // maps stay reachable via DEV ?room= params for local viewing.
+  const WANT_BATTLE = import.meta.env.DEV && params.get('room') === 'battle';
   const room = WANT_TEST_ROOM ? buildTestRoom()
     : WANT_PROD ? buildProdMap()
     : WANT_SHOOTS ? buildShootsMap()
-    : WANT_HAVANA ? buildHavanaMap()
-    : buildBattleMap();
+    : WANT_BATTLE ? buildBattleMap()
+    : buildHavanaMap();
 
   const scene = new THREE.Scene();
   scene.background = room.background;
@@ -273,11 +277,21 @@ function boot() {
     net.onWelcome(({ team }) => { hud.setWeapon(weapons.active); matchHud.setScore(0, 0); });
     net.onEvent((events) => {
       for (const ev of events) {
-        if (ev.t === EV.KILL) matchHud.addKill({ killerName: ev.killerName, killerTeam: ev.killerTeam, victimName: ev.victimName, victimTeam: ev.victimTeam, weapon: ev.weapon, isHead: !!ev.isHead });
-        else if (ev.t === EV.SHOT) audio.botShot(ev.x, ev.y, ev.z);
+        if (ev.t === EV.KILL) {
+          matchHud.addKill({ killerName: ev.killerName, killerTeam: ev.killerTeam, victimName: ev.victimName, victimTeam: ev.victimTeam, weapon: ev.weapon, isHead: !!ev.isHead });
+          // v2.5 positional kill audio: MY kill = a centered confirm cue (+ ding
+          // on a headshot); someone ELSE's kill = a positional cue at the victim
+          // so you hear where the fight is, panned L/R by direction.
+          if (ev.killerId === net.selfId) { audio.killConfirm(); if (ev.isHead) audio.headshotDing(); }
+          else { const e = net.entities.get(ev.id); if (e) audio.killAt(e.pos.x, e.pos.y, e.pos.z); }
+        }
+        else if (ev.t === EV.SHOT) audio.botShot(ev.x, ev.y, ev.z); // already positional (panned)
         else if (ev.t === EV.DEATH) {
+          // v2.5: every death gets a POSITIONAL death sound at the victim (panned
+          // L/R + distance-attenuated). Self-death also drives the overlay/cam.
+          const e = net.entities.get(ev.id);
+          if (e) { fx.splat(e.pos, e.pos, SPLAT_PALETTE[e.team] ?? SPLAT_PALETTE.bug); audio.botDeath(e.pos.x, e.pos.y, e.pos.z, e.team); }
           if (ev.id === net.selfId) { selfDead = true; matchHud.showDeath({ killerName: ev.killerName, killerTeam: ev.killerTeam, weapon: ev.weapon, isHead: !!ev.isHead }); cam.setDeathTilt(true); }
-          else { const e = net.entities.get(ev.id); if (e) fx.splat(e.pos, e.pos, SPLAT_PALETTE[e.team] ?? SPLAT_PALETTE.bug); }
         } else if (ev.t === EV.HIT && ev.by === net.selfId) hud.showHitmarker(!!ev.isHead);
       }
     });

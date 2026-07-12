@@ -60,6 +60,15 @@ const P = {
   wire:    0x2c2c2c,  // power line
   dish:    0xdad2c4,  // satellite dish
   graffiti:0x4a8fb0,  // graffiti accent
+  // --- weathered real-world kour set-dressing (v2.4) ---
+  fence:   0x707a7d,  // galvanized chain-link gray
+  rust:    0x8a5a3c,  // rusted metal / container rust
+  contA:   0x3f7a72,  // faded teal container
+  contB:   0xb5602f,  // faded orange container
+  metal:   0x6b6f73,  // grey painted metal (scaffold, AC, barrels)
+  concrete:0x9a938a,  // concrete / rubble
+  deadwood:0x5c4a38,  // bare/dead tree wood
+  sign:    0xc9b032,  // road-sign yellow
 };
 
 export function buildHavanaMap() {
@@ -241,6 +250,172 @@ export function buildHavanaMap() {
       addBox(0.8, 1.1, 0.8, x + 0.9, 0, z + 0.3, P.barrel, { collide: true });
     }
   }
+
+  // ==========================================================================
+  // KOUR-STYLE SET-DRESSING (v2.4): grounded real-world clutter so the town
+  // reads like a lived-in construction/port arena, not a clean plaza. Placed in
+  // OPEN areas beside the frozen nav routes — never on a nav link, spawn, or
+  // across an alley. Solid cover (containers/barrels/crates/dead-tree trunks)
+  // collides; frames/wires/debris/wall-details are decor. All go through the
+  // existing addBox/addRender + shared buckets — a handful of new colors only.
+  // ==========================================================================
+
+  // -- CHAIN-LINK FENCE segments (thin lattice frame — DECOR, don't wall alleys)
+  // A cheap "fence": 2-3 posts + top & bottom rail + a faint diagonal brace.
+  function fence(cx, cz, len, axis /* 'x'|'z' */, h = 1.8) {
+    const along = axis === 'x' ? [1, 0] : [0, 1];
+    const half = len / 2;
+    // rails
+    addBox(along[0] ? len : 0.05, 0.06, along[0] ? 0.05 : len, cx, h - 0.1, cz, P.fence, { collide: false });
+    addBox(along[0] ? len : 0.05, 0.06, along[0] ? 0.05 : len, cx, 0.15, cz, P.fence, { collide: false });
+    // posts every ~2.5 m
+    const posts = Math.max(2, Math.round(len / 2.5));
+    for (let i = 0; i <= posts; i++) {
+      const t = -half + (len * i) / posts;
+      addBox(0.08, h, 0.08, cx + along[0] * t, 0, cz + along[1] * t, P.fence, { collide: false });
+    }
+    // faint diagonal brace (single thin box across the span)
+    const g0 = new THREE.BoxGeometry(Math.hypot(len, h), 0.03, 0.03);
+    g0.rotateZ(along[0] ? Math.atan2(h, len) : 0);
+    if (!along[0]) g0.rotateY(Math.PI / 2), g0.rotateX(-Math.atan2(h, len));
+    g0.translate(cx, h / 2, cz);
+    if (!buckets.has(P.fence)) buckets.set(P.fence, []);
+    buckets.get(P.fence).push(g0);
+  }
+  fence(-40, -20, 8, 'z');   // along W lot edge
+  fence(40, 18, 8, 'z');     // along E lot edge
+  fence(-20, -42, 7, 'x');   // near S perimeter, off spawns
+  fence(22, 42, 7, 'x');     // near N perimeter
+  fence(-42, 34, 6, 'z');    // corner lot
+
+  // -- SHIPPING CONTAINERS (ribbed box — SOLID body-height cover) --------------
+  // Body ~2.4 m tall (jump-proof roof edge is fine; it's just cover), ribs +
+  // door-end detail are decor merged onto the same faces.
+  function container(cx, cz, rot /* 0 = long along X, 1 = long along Z */, color) {
+    const L = 6.0, W = 2.4, H = 2.4;
+    const w = rot ? W : L, d = rot ? L : W;
+    addBox(w, H, d, cx, 0, cz, color); // SOLID cover
+    // vertical rib strips down the long faces (decor)
+    const ribs = 6, span = rot ? d : w;
+    for (let i = 1; i < ribs; i++) {
+      const t = -span / 2 + (span * i) / ribs;
+      if (rot) {
+        addRender(W + 0.06, H - 0.2, 0.06, cx - W / 2 - 0.03, H / 2, cz + t, P.rust);
+        addRender(W + 0.06, H - 0.2, 0.06, cx + W / 2 + 0.03, H / 2, cz + t, P.rust);
+      } else {
+        addRender(0.06, H - 0.2, W + 0.06, cx + t, H / 2, cz - W / 2 - 0.03, P.rust);
+        addRender(0.06, H - 0.2, W + 0.06, cx + t, H / 2, cz + W / 2 + 0.03, P.rust);
+      }
+    }
+    // door-end detail (two panels + handle bars) on one short end
+    const ex = rot ? cx : cx + w / 2 + 0.04, ez = rot ? cz + d / 2 + 0.04 : cz;
+    addRender(rot ? W * 0.9 : 0.06, H - 0.3, rot ? 0.06 : W * 0.9, ex, H / 2, ez, P.metal);
+    addRender(rot ? 0.06 : 0.06, H - 0.6, rot ? 0.06 : 0.06, ex, H / 2, ez, P.rust);
+  }
+  container(-24, -6, 0, P.contA);   // open lot beside W route
+  container(24, 6, 0, P.contB);     // mirror E
+  container(-6, 24, 1, P.contB);    // N open area
+  container(6, -24, 1, P.contA);    // S open area
+  container(-38, 6, 1, P.rust);     // W perimeter lot
+
+  // -- SCAFFOLDING against two buildings (pole frame + plank platform — decor) -
+  function scaffold(cx, cz, w, faceDir /* [dx,dz] outward */, h = 3.4) {
+    const [fx, fz] = faceDir;
+    // four vertical poles
+    for (const sx of [-w / 2, w / 2]) {
+      for (const oz of [0, 1]) {
+        const px = cx + (fx ? oz * 1.0 : sx), pz = cz + (fz ? oz * 1.0 : sx);
+        addBox(0.08, h, 0.08, px, 0, pz, P.metal, { collide: false });
+      }
+    }
+    // horizontal braces + a plank platform at ~1.9 m (decor)
+    addRender(fx ? 1.0 : w, 0.06, fx ? w : 1.0, cx + fx * 0.5, 1.9, cz + fz * 0.5, P.crate);
+    addRender(fx ? 1.0 : w, 0.05, fx ? w : 1.0, cx + fx * 0.5, h - 0.3, cz + fz * 0.5, P.metal);
+    for (const y of [1.0, 2.6]) addRender(fx ? 0.05 : w, 0.05, fx ? w : 0.05, cx + fx * 0.5, y, cz + fz * 0.5, P.metal);
+  }
+  scaffold(0, -28.8, 4, [0, -1]);   // against S mid-edge building (0,-34) outer face
+  scaffold(-28.2, 0, 4, [-1, 0]);   // against W mid-edge building (-34,0)
+
+  // -- POWER POLES + strung WIRES (thin dark, DECOR) ---------------------------
+  const poleTops = [];
+  function powerPole(cx, cz, h = 6.5) {
+    addBox(0.16, h, 0.16, cx, 0, cz, P.deadwood, { collide: false }); // decor, doesn't block
+    addRender(1.6, 0.1, 0.1, cx, h - 0.3, cz, P.deadwood); // crossarm
+    poleTops.push({ x: cx, z: cz, y: h - 0.3 });
+  }
+  powerPole(-40, 0); powerPole(40, 0); powerPole(0, -44); powerPole(0, 44);
+  // droop-approximation wires between poles and to nearby roofs (thin boxes)
+  const extraWires = [
+    [-40, 0, 0, -44], [40, 0, 0, 44], [-40, 0, -30, -30], [40, 0, 30, 30],
+    [0, -44, 0, -34], [0, 44, 0, 34],
+  ];
+  for (const [x1, z1, x2, z2] of extraWires) {
+    const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+    const g0 = new THREE.BoxGeometry(len, 0.04, 0.04);
+    g0.rotateY(-Math.atan2(dz, dx));
+    g0.translate((x1 + x2) / 2, 5.8, (z1 + z2) / 2);
+    if (!buckets.has(P.wire)) buckets.set(P.wire, []);
+    buckets.get(P.wire).push(g0);
+  }
+
+  // -- EXTRA OIL BARRELS + WOODEN CRATES clustered near containers/alleys ------
+  // (adds to the existing crate/barrel pass — SOLID cover, body-height.)
+  const clusters = [
+    [-21, -8], [21, 8], [-9, 21], [9, -21], [-35, 8], [-27, -3],
+  ];
+  for (const [cx, cz] of clusters) {
+    if (rnd() < 0.5) {
+      addBox(0.8, 1.1, 0.8, cx, 0, cz, P.rust);            // rusty barrel
+      addBox(0.8, 1.1, 0.8, cx + 0.9, 0, cz + 0.2, P.metal); // grey barrel
+      if (rnd() < 0.5) addBox(0.8, 1.1, 0.8, cx + 0.45, 0, cz - 0.85, P.rust);
+    } else {
+      addBox(1.1, 1.0, 1.1, cx, 0, cz, P.crate);           // crate
+      addBox(0.9, 0.8, 0.9, cx + 0.3, 1.0, cz + 0.2, P.crate); // stacked
+      addBox(1.0, 0.9, 1.0, cx - 0.9, 0, cz + 0.3, P.crate);
+    }
+  }
+
+  // -- DEBRIS / RUBBLE piles (small low scattered boxes — DECOR) ---------------
+  const rubbleSpots = [[-24, -6], [24, 6], [-6, 24], [6, -24], [-20, -8], [18, 10], [-12, 20], [12, -20]];
+  for (const [bx, bz] of rubbleSpots) {
+    for (let i = 0; i < 4; i++) {
+      const s = 0.3 + rnd() * 0.5;
+      addBox(s, s * 0.6, s, bx + (rnd() * 2 - 1) * 1.6, 0, bz + (rnd() * 2 - 1) * 1.6,
+        rnd() < 0.5 ? P.concrete : P.rust, { collide: false });
+    }
+  }
+
+  // -- DEAD / BARE TREES (trunk collides; bare branches decor) -----------------
+  function deadTree(cx, cz) {
+    const th = 3.2 + rnd() * 1.0;
+    addBox(0.35, th, 0.35, cx, 0, cz, P.deadwood); // trunk collides
+    for (const [dx, dz, up] of [[1, 0.3, 0.8], [-0.8, 0.6, 1.0], [0.4, -1, 0.7], [-0.5, -0.7, 1.1]]) {
+      const bl = 1.4 + rnd() * 0.8;
+      const g0 = new THREE.BoxGeometry(bl, 0.12, 0.12);
+      g0.rotateZ(Math.atan2(up, dx)); g0.rotateY(-Math.atan2(dz, dx));
+      g0.translate(cx + dx * 0.6, th - 0.5 + up * 0.4, cz + dz * 0.6);
+      if (!buckets.has(P.deadwood)) buckets.set(P.deadwood, []);
+      buckets.get(P.deadwood).push(g0);
+    }
+  }
+  deadTree(-16, 6); deadTree(16, -6); deadTree(-42, -34);
+
+  // -- WALL DETAILS: AC units + satellite dishes + a couple road signs (DECOR) -
+  // AC units bolted onto lower building faces (mid-edge blocks).
+  const acFaces = [
+    [0, -34, 0, -1, 8, 2.0], [0, 34, 0, 1, 8, 2.4], [-34, 0, -1, 0, 8, 2.2], [34, 0, 1, 0, 8, 1.8],
+  ];
+  for (const [cx, cz, fx, fz, off, y] of acFaces) {
+    const ax = cx + fx * off, az = cz + fz * off;
+    addBox(1.0, 0.7, 0.5, ax + (fx ? 0 : 1.5), y, az + (fz ? 0 : 0), P.metal, { collide: false });
+    addBox(1.0, 0.7, 0.5, ax - (fx ? 0 : 1.5), y - 1.6, az, P.metal, { collide: false });
+  }
+  // road signs on thin posts (decor) near open areas
+  function roadSign(cx, cz) {
+    addBox(0.1, 2.4, 0.1, cx, 0, cz, P.metal, { collide: false });
+    addBox(1.0, 0.7, 0.06, cx, 2.0, cz, P.sign, { collide: false });
+  }
+  roadSign(-11, -6); roadSign(11, 6);
 
   // -- GRAFFITI accents (thin decals on perimeter wall — decor) ----------------
   for (let i = 0; i < 6; i++) {

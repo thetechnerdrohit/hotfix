@@ -24,7 +24,10 @@ import { installDomStub } from './domStub.js';
 installDomStub(); // MUST run before importing any src/world or src/game module
 
 // Dynamic import so the DOM stub is guaranteed installed first.
-const { buildBattleMap } = await import('../../src/world/battleMap.js');
+// v2.5: the ONLINE map is now Havana (the kour-style town, set-dressed). Swapped
+// from battleMap so the authoritative server + every client render the same
+// grounded arena Rohit asked for. (battleMap stays in the tree for DEV use.)
+const { buildHavanaMap } = await import('../../src/world/havanaMap.js');
 const { makeGraph } = await import('../../src/world/waypoints.js');
 
 /**
@@ -41,7 +44,7 @@ const { makeGraph } = await import('../../src/world/waypoints.js');
  * }}
  */
 export function loadWorld() {
-  const built = buildBattleMap();
+  const built = buildHavanaMap();
 
   const world = {
     colliders: built.colliders,          // [{min:V3,max:V3}] — hitscan/controller ready
